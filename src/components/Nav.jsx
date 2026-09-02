@@ -46,13 +46,13 @@ export default function Nav() {
     <nav
       ref={navRef}
       class="fixed top-0 left-0 right-0 z-50 px-8 py-5 flex items-center justify-between"
-      style="backdrop-filter: blur(12px); background: rgba(8,8,8,0.7); border-bottom: 1px solid rgba(201,169,110,0.08)"
+      style="backdrop-filter: blur(12px); background: rgba(253,250,247,0.85); border-bottom: 1px solid rgba(178,34,34,0.12)"
     >
       {/* Monogram */}
       <a
         href="/"
-        class="font-serif text-2xl font-light text-gold tracking-wider hover:text-gold-light transition-colors duration-300 cursor-pointer"
-        style="text-decoration:none"
+        class="font-serif text-2xl font-light tracking-wider transition-colors duration-300 cursor-pointer"
+        style="color: #8B6347; text-decoration:none"
       >
         I &amp; V
       </a>
@@ -61,20 +61,28 @@ export default function Nav() {
       <div class="hidden md:flex items-center gap-8">
         <button
           onClick={() => scrollTo('details')}
-          class="font-sans text-xs tracking-[0.3em] text-cream/50 uppercase hover:text-gold transition-colors duration-300 cursor-pointer bg-transparent border-none"
+          class="font-sans text-xs tracking-[0.3em] uppercase transition-colors duration-300 cursor-pointer bg-transparent border-none"
+          style="color: rgba(26,10,10,0.6)"
+          onMouseEnter={(e) => e.target.style.color = '#B22222'}
+          onMouseLeave={(e) => e.target.style.color = 'rgba(26,10,10,0.6)'}
         >
           Details
         </button>
         <button
           onClick={() => scrollTo('rsvp')}
-          class="font-sans text-xs tracking-[0.3em] text-cream/50 uppercase hover:text-gold transition-colors duration-300 cursor-pointer bg-transparent border-none"
+          class="font-sans text-xs tracking-[0.3em] uppercase transition-colors duration-300 cursor-pointer bg-transparent border-none"
+          style="color: rgba(26,10,10,0.6)"
+          onMouseEnter={(e) => e.target.style.color = '#B22222'}
+          onMouseLeave={(e) => e.target.style.color = 'rgba(26,10,10,0.6)'}
         >
           RSVP
         </button>
         <a
           href="/admin"
-          class="font-sans text-xs tracking-[0.3em] text-cream/30 uppercase hover:text-gold transition-colors duration-300"
-          style="text-decoration:none"
+          class="font-sans text-xs tracking-[0.3em] uppercase transition-colors duration-300"
+          style="color: rgba(26,10,10,0.35); text-decoration:none"
+          onMouseEnter={(e) => e.target.style.color = '#B22222'}
+          onMouseLeave={(e) => e.target.style.color = 'rgba(26,10,10,0.35)'}
         >
           Admin
         </a>
@@ -84,7 +92,10 @@ export default function Nav() {
       <div class="md:hidden">
         <button
           onClick={() => scrollTo('rsvp')}
-          class="font-sans text-xs tracking-[0.25em] text-gold border border-gold/30 px-4 py-2 uppercase hover:bg-gold/10 transition-all duration-300 bg-transparent cursor-pointer"
+          class="font-sans text-xs tracking-[0.25em] uppercase px-4 py-2 transition-all duration-300 bg-transparent cursor-pointer"
+          style="color: #B22222; border: 1px solid rgba(178,34,34,0.3)"
+          onMouseEnter={(e) => e.target.style.background = 'rgba(178,34,34,0.08)'}
+          onMouseLeave={(e) => e.target.style.background = 'transparent'}
         >
           RSVP
         </button>

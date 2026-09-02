@@ -3,10 +3,13 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: '#080808',
-        cream: '#F5E6D3',
-        gold: '#C9A96E',
-        'gold-light': '#E8C98A',
+        bg: '#FDFAF7',
+        text: '#1A0A0A',
+        red: '#B22222',
+        'red-light': '#D4394A',
+        'red-pale': '#E8A0A0',
+        gold: '#8B6347',
+        cream: '#FDFAF7',
       },
       fontFamily: {
         serif: ['Cormorant Garamond', 'serif'],
