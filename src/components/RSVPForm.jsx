@@ -11,6 +11,7 @@ export default function RSVPForm() {
   const [plusOne, setPlusOne] = createSignal(false);
   const [dietary, setDietary] = createSignal('');
   const [message, setMessage] = createSignal('');
+  const [phone, setPhone] = createSignal('');
   const [validationError, setValidationError] = createSignal('');
 
   onMount(() => {
@@ -34,6 +35,7 @@ export default function RSVPForm() {
         plus_one: plusOne(),
         dietary: dietary().trim(),
         message: message().trim(),
+        phone: phone().trim(),
       });
     } catch (_err) {
       // Error is already stored in submitError signal from store
@@ -198,8 +200,24 @@ export default function RSVPForm() {
               />
             </div>
 
-            {/* Message */}
+            {/* WhatsApp Phone */}
             <div ref={(el) => (fieldsRef[5] = el)} class="opacity-0">
+              <label class="block font-sans text-xs tracking-widest text-gold uppercase mb-2">
+                WhatsApp Number
+                <span class="ml-2 text-cream/30 normal-case tracking-normal">(optional — for invitation via WhatsApp)</span>
+              </label>
+              <input
+                type="tel"
+                value={phone()}
+                onInput={(e) => setPhone(e.target.value)}
+                placeholder="+972 50 123 4567"
+                class="w-full bg-white/[0.03] border border-gold/20 text-cream placeholder-cream/25 font-sans text-sm px-4 py-3 transition-gold"
+                style="outline:none"
+              />
+            </div>
+
+            {/* Message */}
+            <div ref={(el) => (fieldsRef[6] = el)} class="opacity-0">
               <label class="block font-sans text-xs tracking-widest text-gold uppercase mb-2">
                 A Message for the Couple
                 <span class="ml-2 text-cream/30 normal-case tracking-normal">(optional)</span>
@@ -230,7 +248,7 @@ export default function RSVPForm() {
             </Show>
 
             {/* Submit button */}
-            <div ref={(el) => (fieldsRef[6] = el)} class="opacity-0 pt-2">
+            <div ref={(el) => (fieldsRef[7] = el)} class="opacity-0 pt-2">
               <button
                 type="submit"
                 disabled={submitting()}
