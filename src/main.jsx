@@ -6,9 +6,9 @@ import './index.css';
 
 function RootError(err) {
   return (
-    <div style="padding:40px;color:#C9A96E;font-family:monospace;background:#080808;min-height:100vh">
-      <p style="font-size:1.2rem;margin-bottom:1rem;color:#F5E6D3">Render error — check console</p>
-      <pre style="color:#888;font-size:0.75rem;white-space:pre-wrap">{String(err?.message || err)}</pre>
+    <div style="padding:40px;color:#1A3A6B;font-family:monospace;background:#FDFAF7;min-height:100vh">
+      <p style="font-size:1.2rem;margin-bottom:1rem;color:#B22222">Render error — check console</p>
+      <pre style="color:#8B6347;font-size:0.75rem;white-space:pre-wrap">{String(err?.message || err)}</pre>
     </div>
   );
 }
