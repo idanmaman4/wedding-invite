@@ -1,16 +1,14 @@
-import { createSignal } from 'solid-js';
+import { createSignal, createRoot } from 'solid-js';
 
-// Global signals for RSVP submission state
-const [submitting, setSubmitting] = createSignal(false);
-const [submitted, setSubmitted] = createSignal(false);
-const [submitError, setSubmitError] = createSignal(null);
-const [submitResult, setSubmitResult] = createSignal(null);
+const [submitting, setSubmitting, submitted, setSubmitted, submitError, setSubmitError, submitResult, setSubmitResult] =
+  createRoot(() => {
+    const [submitting, setSubmitting] = createSignal(false);
+    const [submitted, setSubmitted] = createSignal(false);
+    const [submitError, setSubmitError] = createSignal(null);
+    const [submitResult, setSubmitResult] = createSignal(null);
+    return [submitting, setSubmitting, submitted, setSubmitted, submitError, setSubmitError, submitResult, setSubmitResult];
+  });
 
-/**
- * Submit an RSVP to the backend API.
- * @param {{ name: string, attending: boolean, plus_one: boolean, dietary: string, message: string }} formData
- * @returns {Promise<{ id: number, success: boolean, message: string }>}
- */
 export async function submitRSVP(formData) {
   setSubmitting(true);
   setSubmitError(null);
@@ -22,9 +20,10 @@ export async function submitRSVP(formData) {
       body: JSON.stringify({
         name: formData.name,
         attending: formData.attending,
-        plus_one: formData.plus_one,
+        plus_one: formData.plus_one ?? false,
         dietary: formData.dietary || '',
         message: formData.message || '',
+        phone: formData.phone || '',
       }),
     });
 
@@ -38,11 +37,11 @@ export async function submitRSVP(formData) {
     setSubmitted(true);
     return result;
   } catch (err) {
-    setSubmitError(err.message || 'Failed to submit RSVP. Please try again.');
+    setSubmitError(err.message || 'Failed to submit. Please try again.');
     throw err;
   } finally {
     setSubmitting(false);
   }
 }
 
-export { submitting, setSubmitting, submitted, setSubmitted, submitError, setSubmitError, submitResult };
+export { submitting, submitted, submitError, submitResult };

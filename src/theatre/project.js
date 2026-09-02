@@ -1,18 +1,21 @@
 import { getProject } from '@theatre/core';
-import studio from '@theatre/studio';
 
-// Only initialize studio in development mode
-if (import.meta.env.DEV) {
-  studio.initialize();
+let project, sheet, heroCameraObj;
+
+try {
+  project = getProject('Wedding');
+  sheet = project.sheet('Wedding');
+  heroCameraObj = sheet.object('Hero Camera', {
+    position: { x: 0, y: 0, z: 5.5 },
+  });
+
+  if (import.meta.env.DEV) {
+    import('@theatre/studio').then(({ default: studio }) => {
+      studio.initialize();
+    }).catch(() => {});
+  }
+} catch (e) {
+  console.warn('[Theatre.js] Could not initialize:', e?.message);
 }
 
-// Main project — represents the entire wedding animation timeline
-export const project = getProject('Wedding');
-
-// Sheet for the wedding sequence
-export const sheet = project.sheet('Wedding');
-
-// Hero camera object — animatable via Theatre.js Studio
-export const heroCameraObj = sheet.object('Hero Camera', {
-  position: { x: 0, y: 0, z: 5.5 },
-});
+export { project, sheet, heroCameraObj };
