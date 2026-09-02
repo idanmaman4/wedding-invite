@@ -3,46 +3,22 @@
 @tailwind utilities;
 
 :root {
-  --bg: #080808;
-  --cream: #F5E6D3;
-  --gold: #C9A96E;
-  --gold-light: #E8C98A;
+  --bg:         #FDFAF7;
+  --text:       #1A0A0A;
+  --red:        #B22222;
+  --red-light:  #D4394A;
+  --red-pale:   #F5D5D5;
+  --gold:       #C9A96E;
+  --gold-dark:  #8B6347;
+  --navy:       #1A3A6B;
+  --navy-light: #2C5F8A;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
-body { background: var(--bg); color: var(--cream); font-family: 'Inter', sans-serif; overflow-x: hidden; }
-
+body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; overflow-x: hidden; }
 h1, h2, h3 { font-family: 'Cormorant Garamond', serif; }
-
-::selection { background: rgba(201,169,110,0.3); }
-
-/* Custom scrollbar */
+::selection { background: rgba(201,169,110,0.25); }
 ::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: #080808; }
+::-webkit-scrollbar-track { background: #FDFAF7; }
 ::-webkit-scrollbar-thumb { background: #C9A96E; border-radius: 2px; }
-
-/* Glass card utility */
-.glass-card {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(201,169,110,0.2);
-  backdrop-filter: blur(8px);
-}
-
-/* Gold divider */
-.gold-divider {
-  height: 1px;
-  background: linear-gradient(to right, transparent, #C9A96E, transparent);
-}
-
-/* Form focus ring */
-input:focus, textarea:focus, select:focus {
-  outline: none;
-  border-color: rgba(201,169,110,0.6);
-  box-shadow: 0 0 0 1px rgba(201,169,110,0.2);
-}
-
-/* Smooth transitions for interactive elements */
-.transition-gold {
-  transition: border-color 0.3s ease, color 0.3s ease, background-color 0.3s ease, box-shadow 0.3s ease;
-}

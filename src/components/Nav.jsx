@@ -1,15 +1,8 @@
 import { onMount, onCleanup } from 'solid-js';
-import { gsap, ScrollTrigger } from '../animations/gsapSetup';
+import { gsap } from '../animations/gsapSetup';
 
 export default function Nav() {
   let navRef;
-
-  const scrollTo = (id) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
 
   onMount(() => {
     if (!navRef) return;
@@ -22,10 +15,8 @@ export default function Nav() {
         requestAnimationFrame(() => {
           const currentScrollY = window.scrollY;
           if (currentScrollY > lastScrollY && currentScrollY > 80) {
-            // Scrolling down — hide nav
             gsap.to(navRef, { y: -80, duration: 0.35, ease: 'power2.inOut' });
           } else {
-            // Scrolling up — show nav
             gsap.to(navRef, { y: 0, duration: 0.35, ease: 'power2.inOut' });
           }
           lastScrollY = currentScrollY;
@@ -36,55 +27,77 @@ export default function Nav() {
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
-
-    onCleanup(() => {
-      window.removeEventListener('scroll', handleScroll);
-    });
+    onCleanup(() => window.removeEventListener('scroll', handleScroll));
   });
+
+  const scrollTo = (id) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const linkStyle = 'font-sans text-xs tracking-[0.3em] uppercase transition-colors duration-300 cursor-pointer bg-transparent border-none';
 
   return (
     <nav
       ref={navRef}
       class="fixed top-0 left-0 right-0 z-50 px-8 py-5 flex items-center justify-between"
-      style="backdrop-filter: blur(12px); background: rgba(8,8,8,0.7); border-bottom: 1px solid rgba(201,169,110,0.08)"
+      style="
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        background: rgba(253,250,247,0.88);
+        border-bottom: 1px solid rgba(201,169,110,0.18);
+        box-shadow: 0 1px 16px rgba(201,169,110,0.06);
+      "
     >
       {/* Monogram */}
       <a
         href="/"
-        class="font-serif text-2xl font-light text-gold tracking-wider hover:text-gold-light transition-colors duration-300 cursor-pointer"
-        style="text-decoration:none"
+        class="font-serif text-2xl font-light tracking-wider transition-colors duration-300 cursor-pointer"
+        style="color: #C9A96E; text-decoration:none"
+        onMouseEnter={(e) => e.target.style.color = '#8B6347'}
+        onMouseLeave={(e) => e.target.style.color = '#C9A96E'}
       >
         I &amp; V
       </a>
 
-      {/* Navigation links */}
+      {/* Desktop links */}
       <div class="hidden md:flex items-center gap-8">
         <button
           onClick={() => scrollTo('details')}
-          class="font-sans text-xs tracking-[0.3em] text-cream/50 uppercase hover:text-gold transition-colors duration-300 cursor-pointer bg-transparent border-none"
+          class={linkStyle}
+          style="color: #1A3A6B"
+          onMouseEnter={(e) => e.target.style.color = '#C9A96E'}
+          onMouseLeave={(e) => e.target.style.color = '#1A3A6B'}
         >
           Details
         </button>
         <button
           onClick={() => scrollTo('rsvp')}
-          class="font-sans text-xs tracking-[0.3em] text-cream/50 uppercase hover:text-gold transition-colors duration-300 cursor-pointer bg-transparent border-none"
+          class={linkStyle}
+          style="color: #1A3A6B"
+          onMouseEnter={(e) => e.target.style.color = '#C9A96E'}
+          onMouseLeave={(e) => e.target.style.color = '#1A3A6B'}
         >
           RSVP
         </button>
         <a
           href="/admin"
-          class="font-sans text-xs tracking-[0.3em] text-cream/30 uppercase hover:text-gold transition-colors duration-300"
-          style="text-decoration:none"
+          class="font-sans text-xs tracking-[0.3em] uppercase transition-colors duration-300"
+          style="color: rgba(26,58,107,0.4); text-decoration:none"
+          onMouseEnter={(e) => e.target.style.color = '#B22222'}
+          onMouseLeave={(e) => e.target.style.color = 'rgba(26,58,107,0.4)'}
         >
           Admin
         </a>
       </div>
 
-      {/* Mobile — RSVP button only */}
+      {/* Mobile RSVP button */}
       <div class="md:hidden">
         <button
           onClick={() => scrollTo('rsvp')}
-          class="font-sans text-xs tracking-[0.25em] text-gold border border-gold/30 px-4 py-2 uppercase hover:bg-gold/10 transition-all duration-300 bg-transparent cursor-pointer"
+          class="font-sans text-xs tracking-[0.25em] uppercase px-4 py-2 transition-all duration-300 bg-transparent cursor-pointer"
+          style="color: #C9A96E; border: 1px solid rgba(201,169,110,0.4)"
+          onMouseEnter={(e) => { e.target.style.background = 'rgba(201,169,110,0.1)'; }}
+          onMouseLeave={(e) => { e.target.style.background = 'transparent'; }}
         >
           RSVP
         </button>
