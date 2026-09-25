@@ -12,3 +12,10 @@ venv/
 whatsapp-service/.wwebjs_auth/
 whatsapp-service/.wwebjs_cache/
 whatsapp-service/node_modules/
+.pytest_cache/
+.mcp.json
+.claude/
+graft/
+telegram-service/subscribers.json
+telegram-service/node_modules/
+test-results/

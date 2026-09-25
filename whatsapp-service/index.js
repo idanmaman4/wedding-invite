@@ -1,44 +1,52 @@
+'use strict';
+
 require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
-const express = require('express');
-const cors = require('cors');
-
-const app = express();
-app.use(cors());
-app.use(express.json());
+const { createApp, coarse } = require('./app');
 
 const PORT = process.env.PORT || 3001;
-const SITE_URL = process.env.SITE_URL || 'https://your-domain.vercel.app';
+const SITE_URL = process.env.SITE_URL || 'https://wedding-invite-sand-kappa.vercel.app';
+const WA_KEY = (process.env.WA_KEY || '').trim();
 
-// Per-sender state
+// Where LocalAuth keeps the session keys. On a host this points at a mounted
+// volume, so a redeploy does not mean scanning the QR again.
+const SESSION_PATH = process.env.WA_SESSION_PATH || undefined;
+// Set in the container image; unset locally, where Puppeteer's own build is fine.
+const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+
+// Deployed, this service is reachable from the internet and can send messages
+// as you. Refuse to start wide open.
+if (process.env.NODE_ENV === 'production' && !WA_KEY) {
+  console.error(
+    'Refusing to start: WA_KEY is not set.\n' +
+    'This service can send WhatsApp messages as you, so it must not be exposed without a shared secret.\n' +
+    'Set one (e.g. `fly secrets set WA_KEY=$(openssl rand -hex 24)`) and send it as the X-Wa-Key header.',
+  );
+  process.exit(1);
+}
+
+// Default human-ish pacing between bulk messages (ms).
+const DEFAULT_MIN_DELAY = Number(process.env.WA_MIN_DELAY_MS || 3000);
+const DEFAULT_MAX_DELAY = Number(process.env.WA_MAX_DELAY_MS || 7000);
+
+// ─── Per-sender state ────────────────────────────────────────────────────────
 const sessions = {
   idan: { client: null, status: 'disconnected', qrDataUrl: null },
   vered: { client: null, status: 'disconnected', qrDataUrl: null },
 };
 
-function buildInviteMessage(guestName, siteUrl) {
-  return (
-    `🌿 *Idan & Vered's Wedding* 🌿\n\n` +
-    `Dear ${guestName},\n\n` +
-    `We joyfully invite you to celebrate our wedding!\n\n` +
-    `📅 June 14, 2027\n` +
-    `⏰ 18:30\n` +
-    `📍 The Garden Palace, Tel Aviv\n\n` +
-    `Please RSVP at: ${siteUrl}\n\n` +
-    `With love,\nIdan & Vered 💍`
-  );
-}
-
+// ─── Client lifecycle ────────────────────────────────────────────────────────
 function initClient(sender) {
   const session = sessions[sender];
   session.status = 'initializing';
   session.qrDataUrl = null;
 
   const client = new Client({
-    authStrategy: new LocalAuth({ clientId: sender }),
+    authStrategy: new LocalAuth({ clientId: sender, dataPath: SESSION_PATH }),
     puppeteer: {
       headless: true,
+      executablePath: CHROME_PATH,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -49,20 +57,29 @@ function initClient(sender) {
   });
 
   client.on('qr', async (qr) => {
-    session.status = 'awaiting_scan';
-    session.qrDataUrl = await qrcode.toDataURL(qr);
-    console.log(`[${sender}] QR code ready — scan it in the admin panel`);
+    try {
+      session.status = 'awaiting_scan';
+      // The QR payload itself is a login credential — never logged.
+      session.qrDataUrl = await qrcode.toDataURL(qr);
+      console.log(`[${sender}] QR ready — scan it from the admin panel`);
+    } catch (err) {
+      console.error(`[${sender}] QR render failed: ${err.message}`);
+    }
   });
 
   client.on('ready', () => {
     session.status = 'connected';
     session.qrDataUrl = null;
-    console.log(`[${sender}] WhatsApp connected ✓`);
+    console.log(`[${sender}] WhatsApp connected`);
+  });
+
+  client.on('authenticated', () => {
+    console.log(`[${sender}] Authenticated`);
   });
 
   client.on('auth_failure', () => {
     session.status = 'auth_failed';
-    console.error(`[${sender}] Auth failed`);
+    console.error(`[${sender}] Auth failed — delete .wwebjs_auth and scan again`);
   });
 
   client.on('disconnected', (reason) => {
@@ -71,111 +88,39 @@ function initClient(sender) {
     console.log(`[${sender}] Disconnected: ${reason}`);
   });
 
+  // whatsapp-web.js emits this on internal puppeteer trouble; swallowing it
+  // keeps the HTTP server alive so the panel can still report the state.
+  client.on('error', (err) => {
+    console.error(`[${sender}] Client error: ${err && err.message}`);
+  });
+
   client.initialize().catch((err) => {
     session.status = 'error';
-    console.error(`[${sender}] Init error:`, err.message);
+    console.error(`[${sender}] Init error: ${err && err.message}`);
   });
 
   session.client = client;
 }
 
-// ─── Routes ─────────────────────────────────────────────────────────────────
-
-// Status of both sessions
-app.get('/status', (_req, res) => {
-  res.json({
-    idan: sessions.idan.status,
-    vered: sessions.vered.status,
-  });
+const app = createApp({
+  sessions,
+  initClient,
+  waKey: WA_KEY,
+  siteUrl: SITE_URL,
+  minDelay: DEFAULT_MIN_DELAY,
+  maxDelay: DEFAULT_MAX_DELAY,
 });
 
-// Get QR code for a sender (returns data URL or null if already connected)
-app.get('/qr/:sender', (req, res) => {
-  const { sender } = req.params;
-  if (!sessions[sender]) return res.status(400).json({ error: 'Unknown sender' });
-
-  res.json({
-    status: sessions[sender].status,
-    qr: sessions[sender].qrDataUrl,
-  });
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', (reason && reason.message) || reason);
 });
-
-// (Re)initialize a sender's WhatsApp session
-app.post('/connect/:sender', (req, res) => {
-  const { sender } = req.params;
-  if (!sessions[sender]) return res.status(400).json({ error: 'Unknown sender' });
-
-  const s = sessions[sender];
-  if (s.status === 'connected') return res.json({ message: 'Already connected' });
-
-  // Destroy previous client if any
-  if (s.client) {
-    s.client.destroy().catch(() => {});
-    s.client = null;
-  }
-
-  initClient(sender);
-  res.json({ message: `Initializing ${sender} session…` });
+process.on('uncaughtException', (err) => {
+  // Puppeteer/protocol hiccups must not take the HTTP server down.
+  console.error('Uncaught exception:', err && err.message);
 });
-
-// Disconnect a sender
-app.post('/disconnect/:sender', async (req, res) => {
-  const { sender } = req.params;
-  if (!sessions[sender]) return res.status(400).json({ error: 'Unknown sender' });
-
-  const s = sessions[sender];
-  if (s.client) {
-    await s.client.destroy().catch(() => {});
-    s.client = null;
-  }
-  s.status = 'disconnected';
-  s.qrDataUrl = null;
-  res.json({ success: true });
-});
-
-// Send a raw message
-app.post('/send', async (req, res) => {
-  const { sender, to, message } = req.body;
-  if (!sessions[sender]) return res.status(400).json({ error: 'Unknown sender' });
-
-  const s = sessions[sender];
-  if (s.status !== 'connected') {
-    return res.status(400).json({ error: `${sender} is not connected (status: ${s.status})` });
-  }
-
-  const chatId = to.replace(/^\+/, '') + '@c.us';
-  try {
-    await s.client.sendMessage(chatId, message);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Send wedding invitation to a guest
-app.post('/send-invitation', async (req, res) => {
-  const { sender, guestName, phone, websiteUrl } = req.body;
-  if (!sessions[sender]) return res.status(400).json({ error: 'Unknown sender' });
-
-  const s = sessions[sender];
-  if (s.status !== 'connected') {
-    return res.status(400).json({ error: `${sender} is not connected (status: ${s.status})` });
-  }
-
-  const message = buildInviteMessage(guestName, websiteUrl || SITE_URL);
-  const chatId = phone.replace(/^\+/, '') + '@c.us';
-
-  try {
-    await s.client.sendMessage(chatId, message);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── Start ───────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
   console.log(`WhatsApp service listening on http://localhost:${PORT}`);
-  console.log('Sessions start disconnected — connect them from the admin panel.');
+  console.log(WA_KEY ? 'WA_KEY is set — send it as the X-Wa-Key header.' : 'WA_KEY not set — no shared secret required.');
+  console.log(`Sessions start disconnected (${coarse(sessions.idan.status)}) — connect them from the admin panel.`);
 });

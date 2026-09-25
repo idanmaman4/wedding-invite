@@ -1,0 +1,9 @@
+# Store every text file with LF endings, whatever the editor on this machine uses.
+* text=auto eol=lf
+*.webp binary
+*.png binary
+*.jpg binary
+*.glb binary
+*.wasm binary
+*.mp4 binary
+*.webm binary

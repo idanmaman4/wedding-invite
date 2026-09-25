@@ -1,0 +1,22 @@
+{
+  "name": "wedding-telegram-service",
+  "version": "1.0.0",
+  "description": "Telegram bot for the wedding — admin console + RSVP broadcast to subscribers",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js && node --check api.js && node --check store.js && node --check format.js && node --check export.js && node --check schedule.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "17.4.2",
+    "express": "4.22.2",
+    "grammy": "1.46.0",
+    "node-cron": "4.6.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  }
+}

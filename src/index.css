@@ -10,14 +10,18 @@
   --red-pale:   #F5D5D5;
   --gold:       #C9A96E;
   --gold-dark:  #8B6347;
-  --navy:       #1A3A6B;
-  --navy-light: #2C5F8A;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
-body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; overflow-x: hidden; }
-h1, h2, h3 { font-family: 'Cormorant Garamond', serif; }
+/* Smooth scrolling is motion too — honour the visitor's system setting. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+body { background: var(--bg); color: var(--text); font-family: 'Heebo', 'Inter', sans-serif; font-weight: 300; line-height: 1.7; overflow-x: hidden; }
+h1, h2, h3 { font-family: 'Frank Ruhl Libre', 'Cormorant Garamond', serif; line-height: 1.25; }
+h1, h2, h3, .font-serif { font-variant-numeric: lining-nums; font-feature-settings: 'lnum' 1; }
+input, textarea, button { font-family: inherit; line-height: 1.5; }
 ::selection { background: rgba(201,169,110,0.25); }
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: #FDFAF7; }

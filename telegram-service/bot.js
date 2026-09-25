@@ -1,0 +1,678 @@
+'use strict';
+
+/**
+ * The bot itself: every handler, the broadcast, the export job — and nothing
+ * about *how* it is run. `index.js` wraps this in long polling for a laptop;
+ * `api/telegram/*.js` wraps the same bot in a webhook on Vercel.
+ *
+ *   1. Admin console — /stats, /rsvps, /pending, /search, /invite against the
+ *      site's API, with a button menu so nothing has to be typed.
+ *   2. Broadcaster — `broadcast()` fans an incoming RSVP out to every subscriber.
+ *   3. Daily export — `exportJob()` sends an XLSX of everything to everyone;
+ *      /export and /exportall do the same on demand.
+ *
+ * Subscribers and half-finished flows live behind store.js / ui.js, which pick
+ * the database in production and memory/file on a laptop.
+ */
+
+const { Bot, GrammyError, HttpError, InputFile } = require('grammy');
+
+const api = require('./api');
+const store = require('./store');
+const fmt = require('./format');
+const exporter = require('./export');
+const schedule = require('./schedule');
+const ui = require('./ui');
+
+const HTML = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
+const NO_PERMISSION = 'אין הרשאה 🙏 רק עידן וורד יכולים להשתמש בפקודות הניהול.';
+
+/** What Telegram shows in the "/" menu. */
+const COMMANDS = [
+  { command: 'menu', description: 'תפריט הכפתורים' },
+  { command: 'start', description: 'הרשמה לעדכונים' },
+  { command: 'stop', description: 'הפסקת עדכונים' },
+  { command: 'stats', description: 'סיכום אישורי הגעה' },
+  { command: 'rsvps', description: 'מי כבר ענה' },
+  { command: 'pending', description: 'מי עדיין לא ענה' },
+  { command: 'search', description: 'חיפוש לפי שם או טלפון' },
+  { command: 'invite', description: 'הזמנה אישית חדשה (בשלבים)' },
+  { command: 'export', description: 'דוח אקסל מלא אליי' },
+  { command: 'exportall', description: 'שליחת דוח אקסל לכל המנויים' },
+  { command: 'whoami', description: 'מה ה-chat id שלי' },
+  { command: 'help', description: 'רשימת הפקודות' },
+];
+
+/** True for the errors that mean "this chat is gone" rather than "try again". */
+function isDeadChat(err) {
+  if (!(err instanceof GrammyError)) return false;
+  if (err.error_code === 403) return true;
+  const d = String(err.description || '').toLowerCase();
+  return (
+    err.error_code === 400 &&
+    (d.includes('chat not found') || d.includes('user is deactivated') || d.includes('bot was blocked'))
+  );
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const digits = (s) => String(s || '').replace(/\D+/g, '');
+
+/**
+ * Build the bot.
+ *
+ * @param {object} opts
+ * @param {string}   opts.token     from BotFather; never logged
+ * @param {string[]} [opts.adminIds] chat ids that are admins regardless of anything
+ * @param {boolean}  [opts.openAdmin] whether every subscriber is an admin (default true)
+ * @param {object}   [opts.log]     console-like sink
+ */
+function createBot({ token, adminIds = [], openAdmin = true, log = console } = {}) {
+  if (!token) throw new Error('createBot: a Telegram bot token is required');
+
+  const bot = new Bot(token);
+  const ADMIN_IDS = adminIds.map(String);
+
+  /**
+   * Open admin: anyone who has sent /start (i.e. is in the subscriber registry)
+   * may run the admin commands. This is deliberately permissive — the bot is
+   * publicly findable, so with it on anyone who starts the bot can read the
+   * guest list and phone numbers. `openAdmin: false` restores the allow-list.
+   */
+  async function isAdmin(chatId) {
+    if (ADMIN_IDS.includes(String(chatId))) return true;
+    return openAdmin && (await store.has(chatId));
+  }
+
+  /** Reply and return false when the sender may not run admin commands. */
+  async function requireAdmin(ctx) {
+    const id = ctx.chat && ctx.chat.id;
+    if (await isAdmin(id)) return true;
+    await ctx.reply(`${NO_PERMISSION}\n\nה-chat id שלך: <code>${fmt.esc(id)}</code>`, HTML);
+    return false;
+  }
+
+  /** Turn any API failure into a readable Hebrew line instead of a crash. */
+  function apiErrorMessage(err, what) {
+    if (err instanceof api.ApiError) {
+      if (err.missing) return `⚠️ ה-API עדיין לא חושף ${what}. נסו שוב אחרי שהאתר יתעדכן.`;
+      if (err.unauthorized) return '⚠️ סיסמת המנהל שגויה — בדקו את ADMIN_PASSWORD בשירות.';
+      return `⚠️ ${err.message}`;
+    }
+    return `⚠️ שגיאה לא צפויה: ${err && err.message ? err.message : err}`;
+  }
+
+  /**
+   * Send a possibly-long answer as however many messages it takes. `keyboard`,
+   * when given, rides on the last one so the buttons sit at the bottom.
+   */
+  async function replyChunks(ctx, messages, keyboard) {
+    for (let i = 0; i < messages.length; i++) {
+      const last = i === messages.length - 1;
+      await ctx.reply(messages[i], last && keyboard ? { ...HTML, reply_markup: keyboard } : HTML);
+    }
+  }
+
+  // ─── Subscription ──────────────────────────────────────────────────────────
+
+  bot.command('start', async (ctx) => {
+    const chat = ctx.chat;
+    const from = ctx.from || {};
+    const isNew = await store.add({
+      chat_id: chat.id,
+      first_name: from.first_name || chat.first_name || '',
+      username: from.username || chat.username || '',
+    });
+
+    const lines = [
+      `שלום ${fmt.esc(from.first_name || '')} 👋`,
+      '',
+      isNew ? 'נרשמת לעדכונים — תקבלו הודעה על כל אישור הגעה חדש. ✅' : 'אתם כבר רשומים לעדכונים ✅',
+    ];
+
+    if (await isAdmin(chat.id)) {
+      lines.push('', 'יש לכם גישה לפקודות הניהול 🔑');
+    } else {
+      lines.push(
+        '',
+        `ה-chat id שלך הוא <code>${fmt.esc(chat.id)}</code>`,
+        'כדי לקבל גישה לפקודות הניהול, הוסיפו את המספר הזה למשתנה <code>TELEGRAM_ADMIN_IDS</code> והפעילו את הבוט מחדש.',
+      );
+    }
+
+    lines.push('', 'בחרו מה לעשות:');
+    await ctx.reply(lines.join('\n'), { ...HTML, reply_markup: ui.mainMenu() });
+  });
+
+  bot.command('menu', async (ctx) => {
+    await ctx.reply('מה תרצו לעשות?', { ...HTML, reply_markup: ui.mainMenu() });
+  });
+
+  bot.command('stop', async (ctx) => {
+    const removed = await store.remove(ctx.chat.id);
+    await ctx.reply(
+      removed ? 'הוסרת מרשימת העדכונים. /start כדי לחזור. 👋' : 'לא היית רשומים לעדכונים.',
+    );
+  });
+
+  bot.command('whoami', async (ctx) => {
+    await ctx.reply(
+      `ה-chat id שלך: <code>${fmt.esc(ctx.chat.id)}</code>\n` +
+        ((await isAdmin(ctx.chat.id)) ? 'הרשאות ניהול: ✅' : 'הרשאות ניהול: ❌'),
+      HTML,
+    );
+  });
+
+  bot.command('help', async (ctx) => {
+    await ctx.reply(fmt.HELP, { ...HTML, reply_markup: ui.mainMenu() });
+  });
+
+  // ─── Reading the guest list ────────────────────────────────────────────────
+
+  /**
+   * Everyone who answered.
+   *
+   * Invite rows carry the side, so they are preferred — but somebody who opened
+   * the site without a personal link has no invite at all, and must still be
+   * listed. So both sources are merged: answered invites first, then any RSVP
+   * row that no invite accounts for.
+   */
+  async function collectResponded() {
+    let invites = [];
+    try {
+      invites = await api.getInvites();
+    } catch (err) {
+      if (!api.isRecoverable(err)) throw err;
+    }
+
+    const responded = invites.filter((i) => i.responded);
+    const claimed = new Set(responded.map((i) => i.guest_id).filter((id) => id !== null && id !== undefined));
+    const claimedNames = new Set(responded.map((i) => (i.name || '').trim()).filter(Boolean));
+
+    let guests = [];
+    try {
+      guests = await api.getGuests();
+    } catch (err) {
+      if (!api.isRecoverable(err) || !responded.length) throw err;
+    }
+
+    // A guest row is a walk-in when no answered invite points at it. Older API
+    // payloads omit guest_id, so fall back to matching on the name.
+    const walkIns = guests.filter(
+      (g) => !claimed.has(g.id) && !(claimed.size === 0 && claimedNames.has((g.name || '').trim())),
+    );
+
+    return [...responded, ...walkIns];
+  }
+
+  /** Upload one already-built workbook to a chat, with its Hebrew caption. */
+  function sendExportDocument(chatId, filePath, fileName, caption) {
+    return bot.api.sendDocument(chatId, new InputFile(filePath, fileName), {
+      caption,
+      parse_mode: 'HTML',
+    });
+  }
+
+  /**
+   * The command bodies live here so a menu button and a typed command run
+   * exactly the same code. Each one answers on `ctx`, whether that is a
+   * message or a tapped button.
+   */
+  const actions = {
+    async stats(ctx) {
+      try {
+        const stats = await api.getStats();
+        await ctx.reply(fmt.formatStats(stats), { ...HTML, reply_markup: ui.backToMenu() });
+      } catch (err) {
+        await ctx.reply(apiErrorMessage(err, 'נתוני סטטיסטיקה'), { ...HTML, reply_markup: ui.backToMenu() });
+      }
+    },
+
+    async rsvps(ctx) {
+      try {
+        const rows = await collectResponded();
+        const lines = rows.map((row, i) => fmt.rsvpLine(i + 1, row));
+        await replyChunks(ctx, fmt.chunk(`✅ <b>מי שכבר ענה</b> — ${rows.length}`, lines), ui.backToMenu());
+      } catch (err) {
+        await ctx.reply(apiErrorMessage(err, 'רשימת המאשרים'), { ...HTML, reply_markup: ui.backToMenu() });
+      }
+    },
+
+    async pending(ctx) {
+      try {
+        const invites = await api.getInvites();
+        const rows = invites.filter((i) => !i.responded);
+        const lines = rows.map((row, i) => fmt.pendingLine(i + 1, row));
+        await replyChunks(ctx, fmt.chunk(`⏳ <b>טרם ענו</b> — ${rows.length}`, lines), ui.backToMenu());
+      } catch (err) {
+        await ctx.reply(apiErrorMessage(err, 'רשימת ההזמנות'), { ...HTML, reply_markup: ui.backToMenu() });
+      }
+    },
+
+    /** Build the XLSX and send it to whoever asked. */
+    async export(ctx) {
+      await ctx.reply('בונה את הדוח… ⏳');
+
+      let built;
+      try {
+        built = await exporter.buildExport({ now: new Date() });
+      } catch (err) {
+        const message =
+          err instanceof exporter.ExportDataError
+            ? exporter.fallbackNotice(err)
+            : apiErrorMessage(err, 'בניית הדוח');
+        await ctx.reply(message, { ...HTML, reply_markup: ui.backToMenu() });
+        return;
+      }
+
+      try {
+        await sendExportDocument(ctx.chat.id, built.filePath, built.fileName, built.caption);
+        await ctx.reply('הדוח נשלח ✅', { ...HTML, reply_markup: ui.backToMenu() });
+      } catch (err) {
+        await ctx.reply(
+          `⚠️ לא הצלחתי לשלוח את הקובץ: ${fmt.esc(err && err.message ? err.message : err)}`,
+          { ...HTML, reply_markup: ui.backToMenu() },
+        );
+      } finally {
+        built.cleanup();
+      }
+    },
+  };
+
+  bot.command('stats', async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await actions.stats(ctx);
+  });
+
+  bot.command('rsvps', async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await actions.rsvps(ctx);
+  });
+
+  bot.command('pending', async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await actions.pending(ctx);
+  });
+
+  bot.command('export', async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await actions.export(ctx);
+  });
+
+  // ─── Search ────────────────────────────────────────────────────────────────
+
+  /** Run a search and answer with the results. Shared by the command and the button. */
+  async function runSearch(ctx, query) {
+    const needle = query.toLowerCase();
+    const needleDigits = digits(query);
+    const matches = (name, phone) =>
+      String(name || '').toLowerCase().includes(needle) ||
+      (needleDigits.length >= 3 && digits(phone).includes(needleDigits));
+
+    const lines = [];
+    const problems = [];
+
+    try {
+      const invites = (await api.getInvites()).filter((i) => matches(i.name, i.phone));
+      invites.forEach((inv, i) => {
+        lines.push(
+          inv.responded
+            ? `${lines.length + 1}. 📨 ${fmt.rsvpLine(i + 1, inv).replace(/^\d+\.\s*/, '')}`
+            : `${lines.length + 1}. 📨 ${fmt.pendingLine(i + 1, inv).replace(/^\d+\.\s*/, '')} · טרם ענו`,
+        );
+      });
+    } catch (err) {
+      problems.push(apiErrorMessage(err, 'הזמנות'));
+    }
+
+    try {
+      const guests = (await api.getGuests()).filter((g) => matches(g.name, g.phone));
+      guests.forEach((g, i) => {
+        lines.push(`${lines.length + 1}. 💌 ${fmt.rsvpLine(i + 1, g).replace(/^\d+\.\s*/, '')}`);
+      });
+    } catch (err) {
+      problems.push(apiErrorMessage(err, 'אישורי הגעה'));
+    }
+
+    if (!lines.length && problems.length) {
+      await ctx.reply(problems.join('\n'), { ...HTML, reply_markup: ui.backToMenu() });
+      return;
+    }
+
+    const header = `🔍 <b>תוצאות עבור</b> "${fmt.esc(query)}" — ${lines.length}`;
+    const messages = fmt.chunk(header, lines);
+    if (problems.length) messages.push(problems.join('\n'));
+    await replyChunks(ctx, messages, ui.backToMenu());
+  }
+
+  async function askSearchTerm(ctx) {
+    await ui.startFlow(ctx.chat.id, 'search');
+    await ctx.reply('🔍 <b>חיפוש</b>\n\nשלחו שם או מספר טלפון.', { ...HTML, reply_markup: ui.cancelOnly() });
+  }
+
+  bot.command('search', async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const query = String(ctx.match || '').trim();
+    if (!query) {
+      // Nothing typed after the command: ask, and read the next message as the term.
+      await askSearchTerm(ctx);
+      return;
+    }
+    await runSearch(ctx, query);
+  });
+
+  // ─── Creating an invitation, one step at a time ────────────────────────────
+  //
+  // `/invite` on its own walks three steps — name, then phone, then side as
+  // buttons — keeping state in ui.js. The old one-line form
+  // (`/invite שם | טלפון | צד`) still works for anyone who prefers typing.
+
+  const INVITE_STEP_NAME = 0;
+  const INVITE_STEP_PHONE = 1;
+  const INVITE_STEP_SIDE = 2;
+
+  async function askInviteName(ctx) {
+    await ui.startFlow(ctx.chat.id, 'invite');
+    await ctx.reply(
+      '➕ <b>הזמנה חדשה</b> · שלב 1 מתוך 3\n\nמה השם של המוזמנים?',
+      { ...HTML, reply_markup: ui.cancelOnly() },
+    );
+  }
+
+  async function askInvitePhone(ctx, name) {
+    // Reachable straight from `/invite <name>`, so start the flow if the caller
+    // has not already.
+    if (!(await ui.getFlow(ctx.chat.id))) await ui.startFlow(ctx.chat.id, 'invite');
+    await ui.advanceFlow(ctx.chat.id, { step: INVITE_STEP_PHONE, data: { name } });
+    await ctx.reply(
+      `➕ <b>${fmt.esc(name)}</b> · שלב 2 מתוך 3\n\n` +
+        'שלחו מספר טלפון, או שתפו איש קשר מהמקלדת למטה.',
+      { ...HTML, reply_markup: ui.phoneStep() },
+    );
+    // A separate message, because a reply keyboard and inline buttons cannot
+    // ride on the same one.
+    await ctx.reply('📇 אפשר גם לשתף איש קשר:', { reply_markup: ui.shareContact() });
+  }
+
+  async function askInviteSide(ctx, name) {
+    await ui.advanceFlow(ctx.chat.id, { step: INVITE_STEP_SIDE });
+    await ctx.reply(
+      `➕ <b>${fmt.esc(name)}</b> · שלב 3 מתוך 3\n\nלאיזה צד הם שייכים?`,
+      { ...HTML, reply_markup: ui.sideStep() },
+    );
+  }
+
+  /** Create the invitation and hand back the link plus forwardable text. */
+  async function finishInvite(ctx, { name, phone, side }) {
+    await ui.endFlow(ctx.chat.id);
+    try {
+      const invite = await api.createInvite({ name, phone: phone || '', side });
+      const url = invite.url || `${api.API_BASE}/i/${invite.token}`;
+      await ctx.reply(
+        `✅ נוצרה הזמנה ל<b>${fmt.esc(name)}</b>\n` +
+          `👥 צד ${fmt.esc(fmt.sideLabel(side))}\n` +
+          `📞 ${phone ? fmt.esc(phone) : '—'}\n` +
+          `🔗 ${fmt.esc(url)}\n\n` +
+          'הנוסח המוכן לשליחה בהודעה הבאה — אפשר להעתיק אותו כמו שהוא.',
+        HTML,
+      );
+      // Sent unformatted so it can be copied straight into WhatsApp as-is.
+      await ctx.reply(fmt.buildInvitationText(name, url), {
+        link_preview_options: { is_disabled: true },
+        reply_markup: ui.afterInvite(),
+      });
+    } catch (err) {
+      await ctx.reply(apiErrorMessage(err, 'יצירת הזמנות (POST /api/invites)'), {
+        ...HTML,
+        reply_markup: ui.backToMenu(),
+      });
+    }
+  }
+
+  bot.command('invite', async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+
+    const raw = String(ctx.match || '').trim();
+    if (!raw) {
+      await askInviteName(ctx);
+      return;
+    }
+
+    // The typed one-liner: name | phone | side.
+    const parts = (raw.includes('|') ? raw.split('|') : raw.split(',')).map((p) => p.trim());
+    const [name, phone, sideInput] = parts;
+
+    if (!name) {
+      await askInviteName(ctx);
+      return;
+    }
+    // Given only a name, carry on through the steps rather than rejecting it.
+    if (parts.length < 3) {
+      await askInvitePhone(ctx, name);
+      return;
+    }
+
+    const side = fmt.parseSide(sideInput);
+    if (!side) {
+      await ui.startFlow(ctx.chat.id, 'invite');
+      await ui.advanceFlow(ctx.chat.id, { step: INVITE_STEP_SIDE, data: { name, phone: phone || '' } });
+      await ctx.reply(
+        `⚠️ צד לא מוכר: "${fmt.esc(sideInput)}"\n\nבחרו צד:`,
+        { ...HTML, reply_markup: ui.sideStep() },
+      );
+      return;
+    }
+
+    await finishInvite(ctx, { name, phone: phone || '', side });
+  });
+
+  // ─── The steps themselves ──────────────────────────────────────────────────
+
+  /** A shared contact fills the phone step in one tap. */
+  bot.on('message:contact', async (ctx, next) => {
+    const flow = await ui.getFlow(ctx.chat.id);
+    if (!flow || flow.flow !== 'invite' || flow.step !== INVITE_STEP_PHONE) return next();
+    if (!(await requireAdmin(ctx))) return;
+
+    const contact = ctx.message.contact;
+    const name = flow.data.name || [contact.first_name, contact.last_name].filter(Boolean).join(' ');
+    await ui.advanceFlow(ctx.chat.id, { data: { name, phone: contact.phone_number || '' } });
+    await askInviteSide(ctx, name);
+  });
+
+  /** Free text is only ever an answer to a step the bot is waiting on. */
+  bot.on('message:text', async (ctx, next) => {
+    const text = String(ctx.message.text || '').trim();
+    // Anything starting with "/" belongs to a command handler further down the
+    // chain — pass it on rather than swallowing it.
+    if (text.startsWith('/')) return next();
+
+    const flow = await ui.getFlow(ctx.chat.id);
+    if (!flow) return next();
+    if (!(await requireAdmin(ctx))) return;
+
+    if (flow.flow === 'search') {
+      await ui.endFlow(ctx.chat.id);
+      await runSearch(ctx, text);
+      return;
+    }
+
+    if (flow.flow !== 'invite') return next();
+
+    if (flow.step === INVITE_STEP_NAME) {
+      if (!text) {
+        await ctx.reply('צריך שם. נסו שוב:', { ...HTML, reply_markup: ui.cancelOnly() });
+        return;
+      }
+      await askInvitePhone(ctx, text);
+      return;
+    }
+
+    if (flow.step === INVITE_STEP_PHONE) {
+      await ui.advanceFlow(ctx.chat.id, { data: { phone: text } });
+      await askInviteSide(ctx, flow.data.name);
+      return;
+    }
+
+    if (flow.step === INVITE_STEP_SIDE) {
+      // They typed the side instead of tapping it — accept that too.
+      const side = fmt.parseSide(text);
+      if (!side) {
+        await ctx.reply(
+          `⚠️ לא זיהיתי את הצד "${fmt.esc(text)}". בחרו מהכפתורים:`,
+          { ...HTML, reply_markup: ui.sideStep() },
+        );
+        return;
+      }
+      await finishInvite(ctx, { ...flow.data, side });
+    }
+  });
+
+  // ─── Buttons ───────────────────────────────────────────────────────────────
+
+  bot.callbackQuery('flow:cancel', async (ctx) => {
+    await ui.endFlow(ctx.chat.id);
+    await ctx.answerCallbackQuery('בוטל');
+    await ctx.reply('בוטל. מה עכשיו?', { ...HTML, reply_markup: ui.mainMenu() });
+  });
+
+  bot.callbackQuery(/^invite:side:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireAdmin(ctx))) return;
+
+    const side = ctx.match[1];
+    const flow = await ui.getFlow(ctx.chat.id);
+    if (!flow || flow.flow !== 'invite') {
+      await ctx.reply('הבקשה פגה. התחילו מחדש:', { ...HTML, reply_markup: ui.mainMenu() });
+      return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(api.SIDES, side)) {
+      await ctx.reply('צד לא מוכר. בחרו שוב:', { ...HTML, reply_markup: ui.sideStep() });
+      return;
+    }
+    await finishInvite(ctx, { ...flow.data, side });
+  });
+
+  bot.callbackQuery('invite:nophone', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const flow = await ui.getFlow(ctx.chat.id);
+    if (!flow || flow.flow !== 'invite') {
+      await ctx.reply('הבקשה פגה. התחילו מחדש:', { ...HTML, reply_markup: ui.mainMenu() });
+      return;
+    }
+    await ui.advanceFlow(ctx.chat.id, { data: { phone: '' } });
+    await askInviteSide(ctx, flow.data.name);
+  });
+
+  bot.callbackQuery(/^menu:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const what = ctx.match[1];
+
+    if (what === 'home') {
+      await ui.endFlow(ctx.chat.id);
+      await ctx.reply('מה תרצו לעשות?', { ...HTML, reply_markup: ui.mainMenu() });
+      return;
+    }
+    if (what === 'help') {
+      await ctx.reply(fmt.HELP, { ...HTML, reply_markup: ui.backToMenu() });
+      return;
+    }
+    if (!(await requireAdmin(ctx))) return;
+
+    if (what === 'stats') return actions.stats(ctx);
+    if (what === 'rsvps') return actions.rsvps(ctx);
+    if (what === 'pending') return actions.pending(ctx);
+    if (what === 'export') return actions.export(ctx);
+    if (what === 'invite') return askInviteName(ctx);
+    if (what === 'search') return askSearchTerm(ctx);
+  });
+
+  // ─── Broadcasting ──────────────────────────────────────────────────────────
+
+  /**
+   * Send `text` to every subscriber. Chats that blocked or deleted the bot are
+   * pruned from the registry; nothing here is allowed to throw.
+   */
+  async function broadcast(text) {
+    const subscribers = await store.all();
+    let sent = 0;
+    let dropped = 0;
+
+    for (const sub of subscribers) {
+      try {
+        await bot.api.sendMessage(sub.chat_id, text, HTML);
+        sent += 1;
+      } catch (err) {
+        if (isDeadChat(err)) {
+          await store.remove(sub.chat_id);
+          dropped += 1;
+          log.log(`[broadcast] removed unreachable subscriber ${sub.chat_id}`);
+        } else {
+          log.error(`[broadcast] send to ${sub.chat_id} failed:`, err.message);
+        }
+      }
+      await sleep(50); // stay under Telegram's ~30 messages/second ceiling
+    }
+
+    return { total: subscribers.length, sent, dropped };
+  }
+
+  // ─── Daily export ──────────────────────────────────────────────────────────
+
+  /**
+   * The scheduled job, also reused by /exportall. Building it once here keeps
+   * the cron run and the manual command on exactly the same code path.
+   */
+  const exportJob = schedule.createDailyExportJob({
+    listSubscribers: () => store.all(),
+    removeSubscriber: (chatId) => store.remove(chatId),
+    isDeadChat,
+    sendDocument: sendExportDocument,
+    sendMessage: (chatId, text) => bot.api.sendMessage(chatId, text, HTML),
+    log,
+  });
+
+  bot.command('exportall', async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+
+    const subscribers = (await store.all()).length;
+    if (!subscribers) {
+      await ctx.reply('אין מנויים לשלוח אליהם. שלחו /start כדי להירשם.');
+      return;
+    }
+
+    await ctx.reply(`שולח את הדוח ל-${subscribers} מנויים… ⏳`);
+    const result = await exportJob();
+
+    if (result.notice) {
+      await ctx.reply(`⚠️ הדוח לא נוצר — נשלחה הודעת הסבר ל-${result.sent}/${result.total} מנויים.`);
+      return;
+    }
+    await ctx.reply(
+      `📤 הדוח נשלח ל-${result.sent}/${result.total} מנויים` +
+        (result.dropped ? ` (${result.dropped} הוסרו — חסמו את הבוט)` : '') +
+        '.',
+    );
+  });
+
+  // ─── Resilience ────────────────────────────────────────────────────────────
+
+  bot.catch((err) => {
+    const e = err.error;
+    if (e instanceof GrammyError) log.error('[bot] Telegram error:', e.description);
+    else if (e instanceof HttpError) log.error('[bot] network error:', e.message);
+    else log.error('[bot] handler error:', e && e.message ? e.message : e);
+  });
+
+  return { bot, broadcast, isAdmin, exportJob, sendExportDocument, HTML };
+}
+
+/** Constant-time comparison for the shared secret on the notify endpoint. */
+function secretMatches(provided, expected) {
+  if (!expected) return false;
+  const a = Buffer.from(String(provided || ''));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length) return false;
+  return require('crypto').timingSafeEqual(a, b);
+}
+
+module.exports = { createBot, isDeadChat, secretMatches, COMMANDS, HTML };

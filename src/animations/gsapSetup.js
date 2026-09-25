@@ -4,12 +4,26 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 gsap.registerPlugin(ScrollTrigger);
 
 /**
+ * True when the visitor has asked their system for less motion. Checked at the
+ * moment of animating rather than cached, so toggling the setting takes effect
+ * on the next navigation.
+ */
+export const prefersReducedMotion = () =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
  * Splits text into individual character spans and animates them in
  * with a stagger fade-up effect.
  * @param {HTMLElement} el - The element containing the text to animate
  */
 export function animateHeroText(el) {
   if (!el) return;
+  // Reduced motion: the words simply appear. Nothing is animated, so nothing
+  // can be left half-faded if the tween is starved of frames.
+  if (prefersReducedMotion()) return;
+
   const text = el.textContent;
   el.innerHTML = text
     .split('')
@@ -36,6 +50,14 @@ export function animateHeroText(el) {
  * @param {number} stagger - Delay between each element in seconds
  */
 export function revealOnScroll(elements, stagger = 0) {
+  // Reduced motion: show everything where it belongs and register no trigger.
+  // Without this the section stays at its `from` opacity until a tween it never
+  // asked for finishes.
+  if (prefersReducedMotion()) {
+    elements.forEach((el) => { if (el) gsap.set(el, { y: 0, opacity: 1, clearProps: 'transform' }); });
+    return;
+  }
+
   elements.forEach((el, i) => {
     if (!el) return;
     gsap.fromTo(
@@ -61,33 +83,4 @@ export function revealOnScroll(elements, stagger = 0) {
  * Hide nav on scroll down, show on scroll up.
  * @param {HTMLElement} navEl - The navigation element
  */
-export function setupNavScroll(navEl) {
-  if (!navEl) return;
-  let lastScrollY = window.scrollY;
-
-  ScrollTrigger.create({
-    start: 'top top',
-    end: 'max',
-    onUpdate: (self) => {
-      const currentScrollY = self.scroll();
-      if (currentScrollY > lastScrollY && currentScrollY > 80) {
-        // Scrolling down — hide nav
-        gsap.to(navEl, {
-          y: -80,
-          duration: 0.4,
-          ease: 'power2.inOut',
-        });
-      } else {
-        // Scrolling up — show nav
-        gsap.to(navEl, {
-          y: 0,
-          duration: 0.4,
-          ease: 'power2.inOut',
-        });
-      }
-      lastScrollY = currentScrollY;
-    },
-  });
-}
-
 export { gsap, ScrollTrigger };

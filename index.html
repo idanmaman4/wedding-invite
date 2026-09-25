@@ -1,14 +1,31 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Idan &amp; Vered — June 14, 2027</title>
+    <title>עידן &amp; ורד — 25 באוקטובר 2026</title>
+    <meta name="description" content="עידן וורד מתחתנים! יום ראשון, י״ד בחשוון תשפ״ז, 25.10.2026, אולם האירועים תרין, רח׳ אליעזר מזל 6, ראשון לציון. קבלת פנים ב-18:30, חופה ב-19:30. נשמח לאישור הגעתכם עד 15 באוקטובר 2026." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400;1,600&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@300;400;500&family=Heebo:wght@300;400;500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400;1,600&display=swap" />
+    <link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@300;400;500&family=Heebo:wght@300;400;500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400;1,600&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@300;400;500&family=Heebo:wght@300;400;500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400;1,600&display=swap" rel="stylesheet" /></noscript>
+    <style>
+      /* Static first paint: the same loading screen the app shows, drawn before any JS runs. */
+      html { background: #FDFAF7; }
+      #root:empty { position: fixed; inset: 0; background: #FDFAF7; }
+      #root:empty::before {
+        content: 'ע & ו'; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -78px);
+        font: 300 2rem 'Frank Ruhl Libre', 'Cormorant Garamond', serif; letter-spacing: 0.2em; color: #C9A96E; white-space: nowrap;
+      }
+      #root:empty::after {
+        content: ''; position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -12px 0 0 -20px;
+        border: 1.5px solid rgba(201,169,110,0.25); border-top-color: #C9A96E; border-radius: 50%;
+        animation: wedding-boot-spin 1.1s linear infinite;
+      }
+      @keyframes wedding-boot-spin { to { transform: rotate(360deg); } }
+    </style>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
   </head>
   <body>
     <div id="root"></div>

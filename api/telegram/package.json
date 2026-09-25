@@ -1,0 +1,4 @@
+{
+  "type": "commonjs",
+  "description": "The root package.json is type:module for Vite; these functions and the bot they wrap are CommonJS."
+}
