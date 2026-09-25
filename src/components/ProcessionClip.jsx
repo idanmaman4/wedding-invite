@@ -29,33 +29,31 @@ export default function ProcessionClip(props) {
       props.onFail?.();
     };
 
-    // iOS/Android block autoplay in Low Power Mode and in some data-saver
-    // settings even for muted inline video. When play() is rejected, retry on
-    // the visitor's next interaction (scroll counts) so the walk still runs.
-    let gestureHooked = false;
-    const hookGesture = () => {
-      if (gestureHooked) return;
-      gestureHooked = true;
-      const retry = () => {
-        video.play().then(cleanup).catch(() => { /* still blocked; try the next one */ });
-      };
-      const cleanup = () => {
-        gestureHooked = false;
-        ['touchstart', 'pointerdown', 'click', 'scroll'].forEach((e) =>
-          window.removeEventListener(e, retry, { passive: true }));
-      };
-      ['touchstart', 'pointerdown', 'click', 'scroll'].forEach((e) =>
-        window.addEventListener(e, retry, { passive: true }));
-    };
-
+    // Autoplay without a touch. A muted inline video may start on its own,
+    // but iOS in Low Power Mode (and some data-saver settings) refuses even
+    // that: then switch to the live WebGL walk, which no power setting blocks,
+    // instead of waiting for a touch that an idle visitor never gives.
+    let stallTimer = null;
     const play = () => {
       played = true;
       try { video.currentTime = 0; } catch (e) { /* not seekable yet */ }
       const p = video.play();
-      if (p && p.catch) p.catch(hookGesture);
+      if (p && p.catch) {
+        p.catch((err) => {
+          if (err && err.name === 'NotAllowedError') fail();
+          // AbortError etc.: the load was interrupted; the next trigger retries.
+        });
+      }
+      // Started but never moved (a dead network, a codec it will not play):
+      // the live walk is better than a frozen frame.
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        if (!failed && played && video.currentTime < 0.1) fail();
+      }, 12000);
     };
     const reset = () => {
       played = false;
+      clearTimeout(stallTimer);
       video.pause();
       try { video.currentTime = 0; } catch (e) { /* ignore */ }
     };
@@ -73,25 +71,22 @@ export default function ProcessionClip(props) {
       if (video.paused) { try { video.currentTime = 0.04; } catch (e) { /* ignore */ } }
     }, { once: true });
     video.addEventListener('error', fail, { once: true });
-    let readyTimer = null;
     // Start fetching only when the card is within ~1.5 viewports (Lighthouse:
-    // keep the first load free of the 0.9 MB clip).
+    // keep the first load free of the clip), and arm playback right then —
+    // not on `canplay`: iOS Safari often buffers nothing until play() is
+    // called, so waiting for canplay meant the walk never started unless the
+    // visitor touched the screen.
     let armed = false;
     const arm = () => {
       if (armed) return; armed = true;
       video.preload = 'auto';
-      MP4 && video.querySelectorAll('source').forEach((el) => { if (el.dataset.src) el.src = el.dataset.src; });
+      video.querySelectorAll('source').forEach((el) => { if (el.dataset.src) el.src = el.dataset.src; });
       video.load();
-      readyTimer = setTimeout(() => { if (video.readyState < 3) fail(); }, 15000);
-    };
-    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { arm(); io.disconnect(); } }, { rootMargin: '150% 0px' });
-    io.observe(wrapRef);
-    video.addEventListener('canplay', () => {
-      clearTimeout(readyTimer);
+      const section = wrapRef.closest('section') || wrapRef;
       // Arm on the whole RSVP section so the walk is already under way by the
       // time the card itself is in view (no visible wait after arriving).
       trigger = ScrollTrigger.create({
-        trigger: wrapRef.closest('section') || wrapRef,
+        trigger: section,
         start: 'top 80%',
         end: 'bottom top',
         onEnter: play,
@@ -99,13 +94,19 @@ export default function ProcessionClip(props) {
         onLeave: reset,
         onLeaveBack: reset,
       });
-      if (!played && trigger.isActive) play();
-    }, { once: true });
+      // Already there (e.g. the automatic scroll finished first): play now.
+      // Measured directly — a trigger created without a following scroll
+      // does not report itself active until the next scroll event.
+      const r = section.getBoundingClientRect();
+      if (!played && r.top < window.innerHeight * 0.8 && r.bottom > 0) play();
+    };
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { arm(); io.disconnect(); } }, { rootMargin: '150% 0px' });
+    io.observe(wrapRef);
     if (import.meta.env.DEV) window.__processionClip = { useWebm: false, video };
 
     onCleanup(() => {
       io.disconnect();
-      if (readyTimer) clearTimeout(readyTimer);
+      clearTimeout(stallTimer);
       trigger?.kill();
       video.pause();
       video.removeAttribute('src');
