@@ -11,8 +11,10 @@ for (const W of [360, 390, 430]) {
   const H = 800;
   const p = await b.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
   p.on('pageerror', e => console.log('pageerror', e.message));
-  await p.goto(`${BASE}/?vine=live`, { waitUntil: 'networkidle' });
+  await p.goto(`${BASE}/?vine=live&vinedpr=3`, { waitUntil: 'networkidle' });
   await p.waitForFunction(() => window.__vine?.built, null, { timeout: 60000 });
+  const px = await p.evaluate(() => __vine.renderer.getPixelRatio());
+  if (px !== 3) throw new Error(`vine rendered at ${px}x, expected 3x — the strips would be soft`);
   await p.waitForTimeout(1500);
   await p.evaluate(() => { __vine._growthTarget = 1; });
   await p.waitForFunction(() => __vine.growth >= 0.999 && __vine.vineRoses.every(r => r.revealed), null, { timeout: 60000 });

@@ -20,7 +20,7 @@ for m in meta:
     for sl in m['slices']:
         full.paste(Image.open(sl['f']).convert('RGBA'), (0, sl['y'] * S))
     side, top = old[W]['side'], old[W]['top']
-    opts = dict(quality=82, method=6)
+    opts = dict(quality=92, alpha_quality=100, method=6)
     full.crop((0, 0, side * S, docH * S)).save(f'public/media/vine_{W}_left.webp', 'WEBP', **opts)
     full.crop((W * S - side * S, 0, W * S, docH * S)).save(f'public/media/vine_{W}_right.webp', 'WEBP', **opts)
     full.crop((0, 0, W * S, top * S)).save(f'public/media/vine_{W}_top.webp', 'WEBP', **opts)

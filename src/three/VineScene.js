@@ -817,7 +817,11 @@ transformed = aPivot + vinePetalRotate(transformed - aPivot, vinePetalA);`);
     this.leafStepMul = profile.leafStepMul;
     this.roseTier = profile.roseTier;
     this.layerCount = Math.min(MAX_LAYERS, profile.layers);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, profile.dpr));
+    // `?vinedpr=3` renders at the screen's full density: the offline strip
+    // capture needs it (at the phone cap of 1.5 the strips came out at half
+    // resolution and looked soft once stretched onto a 3x screen).
+    const forcedDpr = Number(new URLSearchParams(window.location.search).get('vinedpr')) || 0;
+    this.renderer.setPixelRatio(forcedDpr || Math.min(window.devicePixelRatio, profile.dpr));
     const gut = Math.min(profile.gutMax, (fullW / 2) * 0.38);
     this.gut = gut;
     this.fullW = fullW;
