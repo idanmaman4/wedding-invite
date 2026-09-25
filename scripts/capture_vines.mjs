@@ -5,16 +5,20 @@ import { chromium } from 'playwright';
 // and with the wind frozen, and saves transparent viewport slices down the page.
 const out = process.argv[2];
 const BASE = process.env.VINE_BASE_URL || 'http://localhost:5199';
+// Supersampling: render at SS× and let stitch_vines.py scale down to 3×, so
+// every screen pixel of the strip averages SS/3 × SS/3 rendered ones —
+// smoother cane edges, finer leaf veins and petals than a straight 3× render.
+const SS = Number(process.env.VINE_SS || 6);
 const b = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
 const meta = [];
 for (const W of [360, 390, 430]) {
   const H = 800;
-  const p = await b.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+  const p = await b.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: SS, isMobile: true, hasTouch: true });
   p.on('pageerror', e => console.log('pageerror', e.message));
-  await p.goto(`${BASE}/?vine=live&vinedpr=3`, { waitUntil: 'networkidle' });
+  await p.goto(`${BASE}/?vine=live&vinedpr=${SS}`, { waitUntil: 'networkidle' });
   await p.waitForFunction(() => window.__vine?.built, null, { timeout: 60000 });
   const px = await p.evaluate(() => __vine.renderer.getPixelRatio());
-  if (px !== 3) throw new Error(`vine rendered at ${px}x, expected 3x — the strips would be soft`);
+  if (px !== SS) throw new Error(`vine rendered at ${px}x, expected ${SS}x — the strips would be soft`);
   await p.waitForTimeout(1500);
   await p.evaluate(() => { __vine._growthTarget = 1; });
   await p.waitForFunction(() => __vine.growth >= 0.999 && __vine.vineRoses.every(r => r.revealed), null, { timeout: 60000 });
@@ -40,7 +44,7 @@ for (const W of [360, 390, 430]) {
     if (target >= docH - H) break;
   }
   const count = await p.evaluate(() => __vine.vineRoses.length);
-  meta.push({ W, docH, navH, slices, roses: count });
+  meta.push({ W, docH, navH, slices, roses: count, ss: SS });
   console.log(W, 'docH', docH, 'slices', slices.length, 'roses', count);
   await p.close();
 }

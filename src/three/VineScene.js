@@ -404,9 +404,11 @@ export class VineScene {
     const loader = new THREE.TextureLoader();
     this.barkColorTex = loader.load('/textures/bark_color.jpg');
     this.barkBumpTex = loader.load('/textures/bark_bump.jpg');
+    const aniso = this.renderer.capabilities.getMaxAnisotropy();
     [this.barkColorTex, this.barkBumpTex].forEach((tex) => {
       tex.wrapS = THREE.RepeatWrapping;
       tex.wrapT = THREE.RepeatWrapping;
+      tex.anisotropy = aniso; // canes run at steep angles to the camera
     });
     this.barkColorTex.colorSpace = THREE.SRGBColorSpace;
     this.barkBumpTex.colorSpace = THREE.NoColorSpace;
@@ -419,12 +421,15 @@ export class VineScene {
   // glTF UVs assume flipY = false.
   loadPhotoMaps() {
     const loader = new THREE.TextureLoader();
+    // The GPU's best filtering (usually 16x): leaves and petals are tilted
+    // toward the camera, where 4x left their veins and folds smeared.
+    const aniso = this.renderer.capabilities.getMaxAnisotropy();
     const mk = (path, srgb) => {
       const t = loader.load(path);
       t.flipY = false;
       t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-      t.anisotropy = 4;
+      t.anisotropy = aniso;
       return t;
     };
     this.leafMaps = {
