@@ -11,8 +11,8 @@
  *   3. Daily export — `exportJob()` sends an XLSX of everything to everyone;
  *      /export and /exportall do the same on demand.
  *
- * Subscribers and half-finished flows live behind store.js / ui.js, which pick
- * the database in production and memory/file on a laptop.
+ * Subscribers and half-finished flows live behind store.js / ui.js, both in
+ * the site's database (Supabase) via the admin API, however the bot is run.
  */
 
 const { Bot, GrammyError, HttpError, InputFile } = require('grammy');
@@ -431,10 +431,12 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
           'הנוסח המוכן לשליחה בהודעה הבאה — אפשר להעתיק אותו כמו שהוא.',
         HTML,
       );
-      // Sent unformatted so it can be copied straight into WhatsApp as-is.
-      await ctx.reply(fmt.buildInvitationText(name, url), {
+      // Sent unformatted so it can be copied straight into WhatsApp as-is; the
+      // button opens WhatsApp on the guest's chat with it already written.
+      const text = fmt.buildInvitationText(name, url);
+      await ctx.reply(text, {
         link_preview_options: { is_disabled: true },
-        reply_markup: ui.afterInvite(),
+        reply_markup: ui.afterInvite(phone ? fmt.whatsappShareUrl(phone, text) : null),
       });
     } catch (err) {
       await ctx.reply(apiErrorMessage(err, 'יצירת הזמנות (POST /api/invites)'), {
@@ -483,16 +485,33 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
 
   // ─── The steps themselves ──────────────────────────────────────────────────
 
-  /** A shared contact fills the phone step in one tap. */
-  bot.on('message:contact', async (ctx, next) => {
-    const flow = await ui.getFlow(ctx.chat.id);
-    if (!flow || flow.flow !== 'invite' || flow.step !== INVITE_STEP_PHONE) return next();
+  /**
+   * A shared contact becomes an invitation. Mid-invite it fills the phone
+   * step; at any other time it starts a new invite with the contact's name
+   * and number, so only the side is left to pick (one tap) before the link
+   * and the ready-to-send text come back.
+   */
+  bot.on('message:contact', async (ctx) => {
     if (!(await requireAdmin(ctx))) return;
-
     const contact = ctx.message.contact;
-    const name = flow.data.name || [contact.first_name, contact.last_name].filter(Boolean).join(' ');
-    await ui.advanceFlow(ctx.chat.id, { data: { name, phone: contact.phone_number || '' } });
-    await askInviteSide(ctx, name);
+    const contactName = [contact.first_name, contact.last_name].filter(Boolean).join(' ').trim();
+    const phone = contact.phone_number || '';
+
+    const flow = await ui.getFlow(ctx.chat.id);
+    if (flow && flow.flow === 'invite' && flow.step === INVITE_STEP_PHONE) {
+      const name = flow.data.name || contactName;
+      await ui.advanceFlow(ctx.chat.id, { data: { name, phone } });
+      await askInviteSide(ctx, name);
+      return;
+    }
+
+    const name = contactName || phone;
+    await ui.startFlow(ctx.chat.id, 'invite', { name, phone });
+    await ui.advanceFlow(ctx.chat.id, { step: INVITE_STEP_SIDE });
+    await ctx.reply(
+      `📇 הזמנה ל<b>${fmt.esc(name)}</b>${phone ? ` · ${fmt.esc(phone)}` : ''}\n\nלאיזה צד הם שייכים?`,
+      { ...HTML, reply_markup: ui.sideStep() },
+    );
   });
 
   /** Free text is only ever an answer to a step the bot is waiting on. */

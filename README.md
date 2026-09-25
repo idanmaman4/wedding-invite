@@ -113,6 +113,10 @@ creating a duplicate.
 `/pending`, `/search`, `/invite`, `/export`, `/exportall`. Creating an
 invitation walks three steps (name, then a phone or a shared contact, then the
 side as buttons); the one-line form `/invite שם | טלפון | צד` still works.
+Or just **share a contact** with the bot: it takes the name and number from the
+card, asks only for the side, and sends back the personal link, the ready-to-send
+invitation text, and a button that opens WhatsApp on that person's chat with the
+invitation already written.
 
 Every subscriber is broadcast each RSVP as it lands, and gets the XLSX export
 once a day.
@@ -157,8 +161,10 @@ deletes everything it creates.
 
 `node telegram-service/index.js` runs the same bot by long polling, with the
 notify endpoint on port 8787 and the daily export from an in-process cron. It
-clears any webhook first, so the two modes never fight. Subscribers go to a JSON
-file next to it in this mode (`BOT_STORE=api` to use the database instead).
+clears any webhook first, so the two modes never fight. Subscribers and flow
+state still live in the database — the laptop bot reaches them through the
+deployed site's admin API, so it needs `ADMIN_PASSWORD` and an `API_BASE` (or
+`SITE_URL`) pointing at that site. Nothing is kept on disk or in memory.
 
 ## WhatsApp
 

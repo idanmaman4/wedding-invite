@@ -294,3 +294,17 @@ test('HELP documents every command the bot answers', () => {
     assert.ok(HELP.includes(cmd), `HELP is missing ${cmd}`);
   }
 });
+
+test('whatsappShareUrl opens the guest chat with the text written', () => {
+  const { whatsappShareUrl } = require('../format');
+  const text = 'שלום! https://x/?i=1';
+  const q = `?text=${encodeURIComponent(text)}`;
+  // Israeli numbers in every spelling a contact card or a person uses.
+  for (const p of ['050-111-2233', '0501112233', '+972 50-111-2233', '972501112233', '00972501112233']) {
+    assert.equal(whatsappShareUrl(p, text), `https://wa.me/972501112233${q}`, p);
+  }
+  // A foreign number keeps its own country code.
+  assert.equal(whatsappShareUrl('+44 7700 900123', text), `https://wa.me/447700900123${q}`);
+  // No number: WhatsApp lets the couple choose the chat.
+  assert.equal(whatsappShareUrl('', text), `https://wa.me/${q}`);
+});

@@ -175,6 +175,23 @@ function formatRsvpNotification(payload) {
 }
 
 /** Ready-to-forward invitation text — mirrors the WhatsApp service's wording. */
+/**
+ * A wa.me link that opens WhatsApp on `phone` with `text` already written.
+ * Local numbers (05x…) are Israeli; a number written internationally (+44…,
+ * 00 1…) keeps its own country code. No usable number → a link that lets the
+ * couple pick the chat themselves.
+ */
+function whatsappShareUrl(phone, text) {
+  const raw = String(phone == null ? '' : phone).trim();
+  let digits = raw.replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  else if (!raw.startsWith('+') && !digits.startsWith('972')) {
+    if (digits.startsWith('0')) digits = digits.slice(1);
+    if (digits) digits = `972${digits}`;
+  }
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+}
+
 function buildInvitationText(name, url) {
   const greeting = name ? `שלום ${name},` : 'שלום,';
   return (
@@ -225,4 +242,5 @@ module.exports = {
   formatStats,
   formatRsvpNotification,
   buildInvitationText,
+  whatsappShareUrl,
 };

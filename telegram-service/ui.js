@@ -7,69 +7,51 @@
  * invite", so the bot keeps that itself: one entry per chat, dropped as soon
  * as the flow finishes, is cancelled, or goes stale.
  *
- * Where it lives depends on how the bot runs. A long-lived process keeps it in
- * memory. A serverless function shares nothing between invocations, so there
- * it goes through the site's database (`/api/bot/state`), the same way the
- * subscriber registry does — see store.js for the backend rule.
+ * It lives in the site's database (Supabase) through the admin API
+ * (`/api/bot/state`), the same way the subscriber registry does — see
+ * store.js. Nothing is kept in memory, so a serverless function (which shares
+ * nothing between invocations) and a long-running laptop process behave alike.
  */
 
 const { InlineKeyboard, Keyboard } = require('grammy');
-const { SIDES } = require('./api');
-const { backend } = require('./store');
+const { SIDES, request, ApiError } = require('./api');
 
 /** A flow left untouched for this long is forgotten. */
 const FLOW_TTL_MS = Number(process.env.FLOW_TTL_MS || 15 * 60 * 1000);
 
 // ─── Conversation state ──────────────────────────────────────────────────────
 
-const memory = new Map();
+const statePath = (chatId) => `/api/bot/state/${encodeURIComponent(String(chatId))}`;
 
-const memoryState = {
-  async read(chatId) {
-    return memory.get(String(chatId)) || null;
-  },
-  async write(chatId, state) {
-    memory.set(String(chatId), state);
-  },
-  async clear(chatId) {
-    memory.delete(String(chatId));
-  },
-};
+async function readState(chatId) {
+  try {
+    const res = await request('GET', statePath(chatId));
+    return res && res.data && typeof res.data === 'object' && res.data.flow ? res.data : null;
+  } catch (err) {
+    if (err instanceof ApiError && err.missing) return null;
+    throw err;
+  }
+}
 
-const apiState = {
-  async read(chatId) {
-    const { request, ApiError } = require('./api');
-    try {
-      const res = await request('GET', `/api/bot/state/${encodeURIComponent(String(chatId))}`);
-      return res && res.data && typeof res.data === 'object' && res.data.flow ? res.data : null;
-    } catch (err) {
-      if (err instanceof ApiError && err.missing) return null;
-      throw err;
-    }
-  },
-  async write(chatId, state) {
-    const { request } = require('./api');
-    await request('PUT', `/api/bot/state/${encodeURIComponent(String(chatId))}`, { data: state });
-  },
-  async clear(chatId) {
-    const { request } = require('./api');
-    await request('DELETE', `/api/bot/state/${encodeURIComponent(String(chatId))}`);
-  },
-};
+async function writeState(chatId, state) {
+  await request('PUT', statePath(chatId), { data: state });
+}
 
-const impl = () => (backend() === 'api' ? apiState : memoryState);
+async function clearState(chatId) {
+  await request('DELETE', statePath(chatId));
+}
 
 async function startFlow(chatId, flow, data = {}) {
   const state = { flow, step: 0, data, at: Date.now() };
-  await impl().write(chatId, state);
+  await writeState(chatId, state);
   return state;
 }
 
 async function getFlow(chatId) {
-  const state = await impl().read(chatId);
+  const state = await readState(chatId);
   if (!state) return null;
   if (Date.now() - (state.at || 0) > FLOW_TTL_MS) {
-    await impl().clear(chatId);
+    await clearState(chatId);
     return null;
   }
   return state;
@@ -81,17 +63,12 @@ async function advanceFlow(chatId, patch = {}) {
   Object.assign(state.data, patch.data || {});
   if (patch.step !== undefined) state.step = patch.step;
   state.at = Date.now();
-  await impl().write(chatId, state);
+  await writeState(chatId, state);
   return state;
 }
 
 async function endFlow(chatId) {
-  await impl().clear(chatId);
-}
-
-/** Only for tests and diagnostics: how many in-memory flows are open. */
-function flowCount() {
-  return memory.size;
+  await clearState(chatId);
 }
 
 // ─── Keyboards ───────────────────────────────────────────────────────────────
@@ -131,8 +108,12 @@ function sideStep() {
 }
 
 /** Offered after an invite is created. */
-const afterInvite = () =>
-  new InlineKeyboard().text('➕ עוד הזמנה', 'menu:invite').text('⬅️ תפריט', 'menu:home');
+/** After an invite: send it on WhatsApp in one tap (when there is a link), then carry on. */
+const afterInvite = (whatsappUrl) => {
+  const kb = new InlineKeyboard();
+  if (whatsappUrl) kb.url('📲 שליחה בוואטסאפ', whatsappUrl).row();
+  return kb.text('➕ עוד הזמנה', 'menu:invite').text('⬅️ תפריט', 'menu:home');
+};
 
 /**
  * A one-tap "share a contact" keyboard for the phone step. Telegram shows this
@@ -148,7 +129,6 @@ module.exports = {
   getFlow,
   advanceFlow,
   endFlow,
-  flowCount,
   mainMenu,
   backToMenu,
   cancelOnly,

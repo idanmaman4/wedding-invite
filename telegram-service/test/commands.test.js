@@ -4,31 +4,31 @@
  * The bot's command handlers, driven through grammY's real update pipeline.
  *
  * Nothing talks to Telegram: an api transformer intercepts every outgoing call
- * and records it, and the admin API is a local HTTP server. So these are real
- * end-to-end handler runs — update in, Telegram calls out — with only the two
- * network edges faked.
+ * and records it, and the admin API is a local HTTP server — with the bot's
+ * subscriber and flow-state tables held in memory by test/helpers/bot-db.js.
+ * So these are real end-to-end handler runs — update in, Telegram calls out —
+ * with only the two network edges faked.
  */
 
 const test = require('node:test');
 const { before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+const { createBotDb, isBotRoute } = require('./helpers/bot-db');
 
 let bot;
 let isAdmin;
 let store;
 let apiServer;
 let apiBase;
-let dir;
 
 /** Outgoing Telegram calls: `{ method, payload }`. */
 let sent = [];
 /** Admin-API routes for the test at hand, keyed by "METHOD /path". */
 let routes = {};
 let apiCalls = [];
+/** The bot's own tables (subscribers, flow state), answered when no route is set. */
+const botDb = createBotDb();
 
 let SIDES;   // filled in before(): requiring ../api early would lock API_BASE
 
@@ -120,9 +120,10 @@ before(async () => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
       const key = `${req.method} ${req.url}`;
       apiCalls.push(key);
-      const route = routes[key];
+      const route = routes[key] || botDb.handle(req.method, req.url, raw ? JSON.parse(raw) : null);
       if (!route) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end('{"error":"missing"}');
@@ -134,8 +135,6 @@ before(async () => {
   await new Promise((r) => apiServer.listen(0, '127.0.0.1', r));
   apiBase = `http://127.0.0.1:${apiServer.address().port}`;
 
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wedding-bot-'));
-  process.env.TELEGRAM_SUBSCRIBERS_FILE = path.join(dir, 'subscribers.json');
   process.env.TELEGRAM_BOT_TOKEN = '123456:test-token-not-real';
   process.env.API_BASE = apiBase;
   process.env.ADMIN_PASSWORD = 'pw';
@@ -143,7 +142,6 @@ before(async () => {
   process.env.TELEGRAM_ADMIN_IDS = '';
   process.env.API_TIMEOUT_MS = '2000';
 
-  process.env.BOT_STORE = 'file';
   const { createBot } = require('../bot');
   ({ bot, isAdmin } = createBot({ token: process.env.TELEGRAM_BOT_TOKEN, log: { log() {}, error() {} } }));
   store = require('../store');
@@ -164,14 +162,13 @@ before(async () => {
 
 after(async () => {
   await new Promise((r) => apiServer.close(r));
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
   sent = [];
   routes = {};
   apiCalls = [];
-  fs.rmSync(process.env.TELEGRAM_SUBSCRIBERS_FILE, { force: true });
+  botDb.reset();
 });
 
 // ─── Subscription ────────────────────────────────────────────────────────────
@@ -335,7 +332,10 @@ test('/search with no term asks for one', async () => {
   sent = [];
   await bot.handleUpdate(textUpdate('/search'));
   assert.ok(allText().length > 0);
-  assert.equal(apiCalls.length, 0, 'no API call should be made without a search term');
+  // The only calls are the bot's own bookkeeping (the admin check, the open
+  // search flow) — the guest list is not fetched until there is a term.
+  assert.deepEqual(apiCalls.filter((k) => !isBotRoute(k)), [], 'no search should run without a term');
+  assert.ok(apiCalls.includes(`PUT /api/bot/state/${CHAT}`), 'the search flow should be saved to the database');
 });
 
 test('/search that matches nothing says so', async () => {
@@ -362,6 +362,30 @@ test('/invite creates a personal link and hands back forwardable text', async ()
   assert.ok(text.includes('abc-123'), 'the personal link must be in the reply');
   assert.ok(text.includes('דנה כהן'));
   assert.ok(text.includes('25.10.2026'), 'the ready-to-send invitation text comes with it');
+});
+
+test('sharing a contact creates their invitation: pick a side, get the link and a WhatsApp button', async () => {
+  await bot.handleUpdate(textUpdate('/start'));
+  sent = [];
+  routes['POST /api/invites'] = {
+    body: { token: 'ct-1', name: 'רותם לוי', phone: '+972501112233', side: 'idan', url: `${apiBase}/?i=ct-1` },
+  };
+
+  // No /invite first: the contact card alone starts it.
+  await bot.handleUpdate(contactUpdate('+972501112233', 'רותם לוי'));
+  assert.ok(allText().includes('רותם לוי'), 'the contact name is used');
+  assert.ok(!apiCalls.includes('POST /api/invites'), 'nothing is created before the side is known');
+  assert.ok(buttonData().includes('invite:side:idan'), 'the side is offered as buttons');
+
+  sent = [];
+  await bot.handleUpdate(callbackUpdate('invite:side:idan'));
+  assert.ok(apiCalls.includes('POST /api/invites'));
+  const text = allText();
+  assert.ok(text.includes('ct-1'), 'the personal link comes back');
+  assert.ok(text.includes('25.10.2026'), 'with the ready-to-send invitation');
+  const wa = lastKeyboard().flat().find((b) => b.url);
+  assert.ok(wa && wa.url.startsWith('https://wa.me/972501112233?text='), 'one tap opens WhatsApp on their chat');
+  assert.ok(decodeURIComponent(wa.url).includes('ct-1'), 'with the link already in the message');
 });
 
 test('/invite accepts a Hebrew side label as well as the key', async () => {
