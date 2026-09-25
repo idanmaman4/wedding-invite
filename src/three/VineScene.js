@@ -53,6 +53,10 @@ const CROWN_DENSITY = [4.5, 2.8, 1.6];   // leaf-step divisor per radius
 
 // Desktop/tablet/phone all get the vine, scaled, with a slimmer gutter and
 // fewer layers on narrow screens so it never crowds the centered content.
+// `?vinehq=1`: the offline phone-strip capture renders at full detail — the
+// phone compromises below keep a live render cheap, which a capture need not.
+const HQ = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('vinehq');
+
 function responsiveProfile(vw) {
   if (vw < 480) return { scale: 0.55, gutMax: 42, layers: 3, leafStepMul: 1.3, dpr: 1.5, roseTier: 0 };
   if (vw < 760) return { scale: 0.72, gutMax: 76, layers: 4, leafStepMul: 1.15, dpr: 1.5, roseTier: 1 };
@@ -819,7 +823,7 @@ transformed = aPivot + vinePetalRotate(transformed - aPivot, vinePetalA);`);
     this.docH = document.documentElement.scrollHeight;
     const profile = responsiveProfile(fullW);
     this.respScale = profile.scale;
-    this.leafStepMul = profile.leafStepMul;
+    this.leafStepMul = HQ ? 1.0 : profile.leafStepMul; // capture: full foliage
     this.roseTier = profile.roseTier;
     this.layerCount = Math.min(MAX_LAYERS, profile.layers);
     // `?vinedpr=3` renders at the screen's full density: the offline strip
@@ -883,8 +887,9 @@ transformed = aPivot + vinePetalRotate(transformed - aPivot, vinePetalA);`);
   buildTube(curve, side, layer, opts = {}) {
     const { radiusMul = 1, minSeg = 120, uStart = 0, uSpan = 1, crown = null, taperEnd = 0.30 } = opts;
     const t = layer / Math.max(1, this.layerCount - 1);
-    const segments = Math.max(minSeg, Math.round(curve.getLength() / 20));
-    const radialSegments = 8;
+    // Capture: rounder, smoother canes (at 6x an 8-sided tube shows facets).
+    const segments = Math.max(minSeg, Math.round(curve.getLength() / (HQ ? 10 : 20)));
+    const radialSegments = HQ ? 16 : 8;
     // Front cane thickest; farthest ~45% — never below ~1px.
     const baseRadius = 2.3 * Math.max(0.65, this.respScale) * (1 - t * 0.55) * radiusMul;
     const geo = new THREE.TubeGeometry(curve, segments, baseRadius, radialSegments, false);
@@ -1418,8 +1423,9 @@ transformed = vineWindRot() * transformed;`);
   // geometries: petals (own material clone → per-bloom uniforms), greens,
   // and — front layer, tier >= 1 only — the merged stamens.
   instantiateRose(layer, variant = 'Rose_A') {
-    const useStamen = layer === 0 && this.roseTier >= 1;
-    const wantLo = layer >= 1 || this.roseTier === 0;
+    // Capture (HQ): every bloom at full detail, stamens included.
+    const useStamen = HQ ? layer <= 1 : layer === 0 && this.roseTier >= 1;
+    const wantLo = !HQ && (layer >= 1 || this.roseTier === 0);
     const tpl = (wantLo && this.roseTemplates?.[variant + '_lo']) || this.roseTemplates?.[variant] || this.roseTemplates?.Rose_A;
     if (!tpl) return null;
     const root = new THREE.Group();

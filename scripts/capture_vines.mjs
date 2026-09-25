@@ -15,7 +15,7 @@ for (const W of [360, 390, 430]) {
   const H = 800;
   const p = await b.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: SS, isMobile: true, hasTouch: true });
   p.on('pageerror', e => console.log('pageerror', e.message));
-  await p.goto(`${BASE}/?vine=live&vinedpr=${SS}`, { waitUntil: 'networkidle' });
+  await p.goto(`${BASE}/?vine=live&vinedpr=${SS}&vinehq=1`, { waitUntil: 'networkidle' });
   await p.waitForFunction(() => window.__vine?.built, null, { timeout: 60000 });
   const px = await p.evaluate(() => __vine.renderer.getPixelRatio());
   if (px !== SS) throw new Error(`vine rendered at ${px}x, expected ${SS}x — the strips would be soft`);
