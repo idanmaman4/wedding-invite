@@ -455,16 +455,24 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
         'הנוסח המוכן לשליחה בהודעה הבאה — אפשר להעתיק אותו כמו שהוא.',
       HTML,
     );
-    // Sent unformatted so it can be copied straight into WhatsApp as-is; the
-    // button opens WhatsApp on the guest's chat with it already written.
+    // The printed invitation card with the text (and personal link) as its
+    // caption — unformatted, so it can be copied straight into WhatsApp as-is;
+    // the button opens WhatsApp on the guest's chat with it already written.
     const text = fmt.buildInvitationText(name, url);
-    await ctx.reply(text, {
-      link_preview_options: { is_disabled: true },
-      reply_markup: ui.afterInvite(
-        phone ? fmt.whatsappShareUrl(phone, text) : null,
-        offerRename ? invite.token : null,
-      ),
-    });
+    const reply_markup = ui.afterInvite(
+      phone ? fmt.whatsappShareUrl(phone, text) : null,
+      offerRename ? invite.token : null,
+    );
+    if (text.length <= fmt.CAPTION_LIMIT) {
+      try {
+        await ctx.replyWithPhoto(api.invitationCardUrl(), { caption: text, reply_markup });
+        return;
+      } catch (err) {
+        // Telegram could not fetch the card: the text alone still does the job.
+        log.error('[invite] could not send the invitation card:', err.message);
+      }
+    }
+    await ctx.reply(text, { link_preview_options: { is_disabled: true }, reply_markup });
   }
 
   /** Create the invitation and hand back the link plus forwardable text. */

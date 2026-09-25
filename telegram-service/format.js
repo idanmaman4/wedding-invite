@@ -198,6 +198,9 @@ function whatsappShareUrl(phone, text) {
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }
 
+/** Telegram's limit for a photo caption (a message may be 4096). */
+const CAPTION_LIMIT = 1024;
+
 function buildInvitationText(name, url) {
   const greeting = name ? `שלום ${name},` : 'שלום,';
   return (
@@ -251,4 +254,5 @@ module.exports = {
   formatRsvpNotification,
   buildInvitationText,
   whatsappShareUrl,
+  CAPTION_LIMIT,
 };

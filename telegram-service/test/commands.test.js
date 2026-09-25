@@ -103,7 +103,11 @@ function textUpdate(text, chatId = CHAT) {
 }
 
 /** Every message body the bot sent, concatenated. */
-const allText = () => sent.filter((c) => c.method === 'sendMessage').map((c) => c.payload.text).join('\n---\n');
+// Messages and photo captions (the invitation arrives as the card photo).
+const allText = () => sent
+  .filter((c) => c.method === 'sendMessage' || c.method === 'sendPhoto')
+  .map((c) => c.payload.text || c.payload.caption)
+  .join('\n---\n');
 
 /** The inline keyboard on the most recent message that carried one. */
 function lastKeyboard() {
@@ -468,6 +472,45 @@ test('/side none goes back to asking, and a default also skips the /invite side 
   sent = [];
   await bot.handleUpdate(contactUpdate('0509999999', 'אורח'));
   assert.ok(buttonData().includes('invite:side:idan'), 'the side is asked again');
+});
+
+test('the invitation goes out as the printed card, the text and link as its caption', async () => {
+  await bot.handleUpdate(textUpdate('/start'));
+  sent = [];
+  routes['POST /api/invites'] = {
+    body: { token: 'card-1', name: 'דנה', phone: '0501234567', side: 'vered', url: `${apiBase}/?i=card-1` },
+  };
+  await bot.handleUpdate(textUpdate('/invite דנה | 0501234567 | ורד'));
+
+  const photo = sent.find((c) => c.method === 'sendPhoto');
+  assert.ok(photo, 'the card photo was sent');
+  assert.ok(String(photo.payload.photo).endsWith('/media/invitation-card.jpg'), 'it is the invitation card');
+  assert.ok(photo.payload.caption.includes('?i=card-1'), 'the personal link is in the caption');
+  assert.ok(photo.payload.caption.includes('25.10.2026'));
+  assert.ok(photo.payload.caption.length <= 1024, "within Telegram's caption limit");
+  const wa = photo.payload.reply_markup.inline_keyboard.flat().find((b) => b.url);
+  assert.ok(wa && wa.url.startsWith('https://wa.me/972501234567'), 'the WhatsApp button rides on the photo');
+});
+
+test('if the card cannot be sent, the invitation text still goes out', async () => {
+  await bot.handleUpdate(textUpdate('/start'));
+  sent = [];
+  routes['POST /api/invites'] = {
+    body: { token: 'card-2', name: 'רון', phone: '0501234567', side: 'idan', url: `${apiBase}/?i=card-2` },
+  };
+  // Telegram refuses the photo (e.g. it could not fetch the URL).
+  const fail = async (prev, method, payload, signal) => {
+    if (method === 'sendPhoto') throw new Error('Bad Request: wrong file identifier/HTTP URL specified');
+    return prev(method, payload, signal);
+  };
+  bot.api.config.use(fail);
+  try {
+    await bot.handleUpdate(textUpdate('/invite רון | 0501234567 | עידן'));
+  } finally {
+    bot.api.config.installedTransformers().splice(bot.api.config.installedTransformers().indexOf(fail), 1);
+  }
+  const text = sent.filter((c) => c.method === 'sendMessage').map((c) => c.payload.text).join('\n');
+  assert.ok(text.includes('?i=card-2') && text.includes('25.10.2026'), 'the invitation text was sent instead');
 });
 
 test('/invite accepts a Hebrew side label as well as the key', async () => {

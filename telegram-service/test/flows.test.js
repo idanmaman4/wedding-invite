@@ -73,7 +73,11 @@ function tap(data) {
 }
 
 const messages = () => sent.filter((c) => c.method === 'sendMessage');
-const allText = () => messages().map((c) => c.payload.text).join('\n---\n');
+// Messages and photo captions (the invitation arrives as the card photo).
+const allText = () => sent
+  .filter((c) => c.method === 'sendMessage' || c.method === 'sendPhoto')
+  .map((c) => c.payload.text || c.payload.caption)
+  .join('\n---\n');
 
 function lastKeyboard() {
   for (let i = sent.length - 1; i >= 0; i--) {

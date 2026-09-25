@@ -94,6 +94,8 @@ const num = (v, fallback = 0) => {
  */
 /** A personal link in the one shape the site understands. */
 const inviteUrl = (token) => `${API_BASE}/?i=${encodeURIComponent(token)}`;
+/** The printed invitation card (public/media), sent with every invitation. */
+const invitationCardUrl = () => `${API_BASE}/media/invitation-card.jpg`;
 
 function normalizeInvite(row) {
   return {
@@ -320,6 +322,7 @@ module.exports = {
   createInvite,
   updateInvite,
   inviteUrl,
+  invitationCardUrl,
   statsFromInvites,
   statsFromGuests,
   isRecoverable,
