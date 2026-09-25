@@ -38,7 +38,20 @@ from test_integration import side_service, wait_for  # noqa: F401  (fixture)
     ],
 )
 def test_hosted_postgres_urls_are_normalised(raw, expected):
-    assert models.normalize_database_url(raw) == expected
+    # The driver is always named explicitly (see the next test).
+    assert models.normalize_database_url(raw) == expected.replace("postgresql://", "postgresql+psycopg2://", 1)
+
+
+def test_postgres_urls_load_the_installed_driver():
+    # SQLAlchemy 2.1 maps a bare postgresql:// to psycopg 3, which is not
+    # installed; on Vercel that failed the import of api.main, so every
+    # endpoint answered FUNCTION_INVOCATION_FAILED. create_engine imports the
+    # DBAPI without connecting, so this catches it offline.
+    from sqlalchemy import create_engine
+    url = models.normalize_database_url("postgres://u:p@h:6543/postgres?sslmode=require")
+    engine = create_engine(url)
+    assert engine.dialect.driver == "psycopg2"
+    engine.dispose()
 
 
 def test_serverless_postgres_does_not_pool_connections(monkeypatch):
@@ -47,7 +60,7 @@ def test_serverless_postgres_does_not_pool_connections(monkeypatch):
     engine = models.build_engine()
     try:
         assert isinstance(engine.pool, NullPool)
-        assert engine.url.drivername == "postgresql"
+        assert engine.url.drivername == "postgresql+psycopg2"
         assert engine.url.query.get("sslmode") == "require"
     finally:
         engine.dispose()

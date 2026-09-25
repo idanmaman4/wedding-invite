@@ -152,6 +152,11 @@ def normalize_database_url(url: str) -> str:
     url = (url or "").strip()
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
+    # Name the driver: SQLAlchemy 2.1 maps a bare postgresql:// to psycopg 3,
+    # which is not installed (psycopg2-binary is), and the import failure
+    # took every endpoint down with FUNCTION_INVOCATION_FAILED.
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
     if "?" in url and url.startswith("postgresql"):
         base, _, query = url.partition("?")
         kept = [
