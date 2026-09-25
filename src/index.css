@@ -26,3 +26,11 @@ input, textarea, button { font-family: inherit; line-height: 1.5; }
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: #FDFAF7; }
 ::-webkit-scrollbar-thumb { background: #C9A96E; border-radius: 2px; }
+
+/* Phones: the vine garland hangs across the top of the hero (its band is
+   ~48% of the viewport width tall), so the invitation text is centred in
+   the space below it instead of under the leaves. */
+@media (max-width: 767px) {
+  #hero { padding-top: 46vw; padding-bottom: 72px; }
+  #hero .hero-panel { padding-top: 0; padding-bottom: 0; }
+}

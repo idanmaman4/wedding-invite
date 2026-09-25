@@ -6,6 +6,7 @@ import Hero from './components/Hero';
 import Details from './components/Details';
 import RSVPForm from './components/RSVPForm';
 import { gsap } from './animations/gsapSetup';
+import { isSlowGpu } from './gpu';
 
 function ErrorFallback(err) {
   return (
@@ -22,12 +23,18 @@ export default function HomePage() {
   let loaderRef;
 
   // Phones get pre-rendered vine strips (no WebGL); wider screens run the live
-  // scene. `?vine=live` forces the live scene (used by the strip capture).
+  // scene unless WebGL would run in software, where they get the widest strip
+  // set at a fixed scale instead. `?vine=live` forces the live scene (used by
+  // the strip capture).
   const pickStrips = () => {
     if (typeof window === 'undefined') return null;
     if (new URLSearchParams(location.search).has('vine')) return null;
+    if (!vineSets.length) return null;
     const vw = document.documentElement.clientWidth;
-    if (vw >= 768 || !vineSets.length) return null;
+    if (vw >= 768) {
+      if (!isSlowGpu()) return null;
+      return { ...vineSets[vineSets.length - 1], desktop: true };
+    }
     return vineSets.reduce((a, b) => (Math.abs(b.width - vw) < Math.abs(a.width - vw) ? b : a));
   };
   const [stripSet] = createSignal(pickStrips());

@@ -63,7 +63,10 @@ export async function submitRSVP(formData) {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: 'שגיאה לא ידועה' }));
-      throw new Error(err.detail || `HTTP ${response.status}`);
+      // FastAPI validation errors (422) carry `detail` as a list of objects,
+      // which would show as "[object Object]"; guests get a plain sentence.
+      const detail = typeof err.detail === 'string' ? err.detail : 'חלק מהפרטים לא תקינים, בדקו ונסו שוב.';
+      throw new Error(response.status >= 500 ? 'השליחה נכשלה, נסו שוב בעוד רגע.' : detail);
     }
 
     const result = await response.json();

@@ -1,5 +1,6 @@
 import { onMount, onCleanup } from 'solid-js';
 import { animateHeroText } from '../animations/gsapSetup';
+import { isSlowGpu } from '../gpu';
 
 export default function Hero() {
   let canvasRef, titleRef, subtitleRef, dateRef, venueRef, scrollRef;
@@ -8,7 +9,9 @@ export default function Hero() {
   onMount(() => {
     // The three.js hero chunk loads after first paint (text + vines render first).
     let disposed = false;
-    import('../three/WeddingScene').then(({ WeddingScene }) => {
+    // Software WebGL renders the particle rings at ~1fps and starves the page;
+    // the hero reads fine without them.
+    if (!isSlowGpu()) import('../three/WeddingScene').then(({ WeddingScene }) => {
       if (disposed) return;
       scene = new WeddingScene(canvasRef);
       if (import.meta.env.DEV) window.__hero = scene; // dev-only debug handle
@@ -41,7 +44,8 @@ export default function Hero() {
   return (
     <section
       id="hero"
-      class="relative h-screen w-full overflow-hidden flex items-center justify-center"
+      class="relative w-full overflow-hidden flex items-center justify-center"
+      style="min-height: 100vh; min-height: 100svh"
     >
       {/* Three.js canvas — white background, gold rings, red roses */}
       <canvas
@@ -52,7 +56,7 @@ export default function Hero() {
 
       {/* Hero text panel — no glass card; text uses glow shadow to stay readable over the 3D scene */}
       <div
-        class="relative z-10 text-center pointer-events-none select-none px-10 py-12"
+        class="hero-panel relative z-10 text-center pointer-events-none select-none px-4 sm:px-10 py-12"
         style="
           max-width: 640px;
           width: 90%;
@@ -102,9 +106,9 @@ export default function Hero() {
           class="flex items-center justify-center gap-4 mb-4"
           style="opacity:0"
         >
-          <div class="h-px w-12" style="background: rgba(201,169,110,0.5)" />
-          <p class="font-serif text-2xl" style="color: #C9A96E; text-shadow: 0 2px 18px rgba(253,250,247,0.9), 0 1px 3px rgba(253,250,247,0.6)">י״ד בחשוון תשפ״ז<span class="hidden sm:inline"> · </span><span class="block sm:inline">25.10.2026</span></p>
-          <div class="h-px w-12" style="background: rgba(201,169,110,0.5)" />
+          <div class="hidden sm:block h-px w-12" style="background: rgba(201,169,110,0.5)" />
+          <p class="font-serif text-2xl" style="color: #C9A96E; text-shadow: 0 2px 18px rgba(253,250,247,0.9), 0 1px 3px rgba(253,250,247,0.6)"><span class="whitespace-nowrap">י״ד בחשוון תשפ״ז</span><span class="hidden sm:inline"> · </span><span class="block sm:inline">25.10.2026</span></p>
+          <div class="hidden sm:block h-px w-12" style="background: rgba(201,169,110,0.5)" />
         </div>
 
         {/* Venue */}

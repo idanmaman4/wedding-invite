@@ -75,7 +75,11 @@ async function fanOut(subscribers, send, { removeSubscriber, isDeadChat, delayMs
       sent += 1;
     } catch (err) {
       if (isDeadChat(err)) {
-        await removeSubscriber(sub.chat_id);
+        try {
+          await removeSubscriber(sub.chat_id);
+        } catch (removeErr) {
+          log.error(`[export] could not remove ${sub.chat_id}:`, removeErr && removeErr.message ? removeErr.message : removeErr);
+        }
         dropped += 1;
         log.log(`[export] removed unreachable subscriber ${sub.chat_id}`);
       } else {

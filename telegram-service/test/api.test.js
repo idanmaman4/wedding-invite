@@ -144,7 +144,8 @@ test('normalizeInvite fills in the defaults the bot relies on', async () => {
   assert.equal(inv.guests, 3, 'a numeric string becomes a number');
   assert.equal(inv.responded, false);
   assert.equal(inv.attending, null, 'unanswered stays null, not false');
-  assert.equal(inv.url, `${baseUrl}/i/tok`, 'a link is derived when the API omits it');
+  // The site reads ?i=<token> (src/store/rsvp.js); /i/<token> opened no invitation.
+  assert.equal(inv.url, `${baseUrl}/?i=tok`, 'a link is derived when the API omits it');
 });
 
 test('normalizeGuest tolerates the dietary field under any of its spellings', async () => {

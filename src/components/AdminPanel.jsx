@@ -51,7 +51,10 @@ const DECLINED = 'rgba(26,10,10,0.28)';
 const RSVP_DEADLINE = new Date('2026-10-15T23:59:59+03:00');
 const WEDDING_DAY = new Date('2026-10-25T18:30:00+03:00');
 
-const daysUntil = (date) => Math.ceil((date - new Date()) / 86400000);
+// Calendar days in Israel, not rounded-up 24h spans: on the morning of 25.9
+// the wedding (25.10) is 30 days away, not 31.
+const israelDay = (d) => Date.parse(`${d.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' })}T00:00:00Z`);
+const daysUntil = (date) => Math.round((israelDay(date) - israelDay(new Date())) / 86400000);
 
 /** Numbers are for comparing, so they get tabular figures everywhere. */
 const FIGURES = 'font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1;';
@@ -780,7 +783,11 @@ export default function AdminPanel() {
                   </button>
                 )}
               </For>
-              <span class="mx-2" style="color: rgba(26,10,10,0.15)">|</span>
+              {/* Desktop: a divider between the two chip groups. Phones: the
+                  groups wrap anyway, so start the side chips on their own row
+                  instead of leaving the divider dangling at a line end. */}
+              <span class="hidden sm:inline mx-2" style="color: rgba(26,10,10,0.15)">|</span>
+              <span class="basis-full h-0 sm:hidden" aria-hidden="true" />
               <button
                 onClick={() => setSideFilter('all')}
                 class="font-sans text-xs px-3 py-1.5 transition-all duration-200"
@@ -1081,7 +1088,11 @@ export default function AdminPanel() {
                   </button>
                 )}
               </For>
-              <span class="mx-2" style="color: rgba(26,10,10,0.15)">|</span>
+              {/* Desktop: a divider between the two chip groups. Phones: the
+                  groups wrap anyway, so start the side chips on their own row
+                  instead of leaving the divider dangling at a line end. */}
+              <span class="hidden sm:inline mx-2" style="color: rgba(26,10,10,0.15)">|</span>
+              <span class="basis-full h-0 sm:hidden" aria-hidden="true" />
               <button
                 onClick={() => setSideFilter('all')}
                 class="font-sans text-xs px-3 py-1.5 transition-all duration-200"

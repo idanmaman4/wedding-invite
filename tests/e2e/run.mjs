@@ -437,8 +437,11 @@ async function main() {
       const startBtn = cardButton(page, /אישור הגעה/);
       await startBtn.waitFor({ state: 'visible', timeout: 30000 });
       await startBtn.click();
-      // A personal link already knows the name, so the wizard opens on the answer.
-      assert((await page.textContent('body')).includes('האם תגיעו'), 'the name step was not skipped');
+      // A personal link already knows the name, so the wizard opens on the answer
+      // (after the 0.4s slide-out, so wait for it rather than read at once).
+      const skipped = await page.getByText('האם תגיעו').first()
+        .waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false);
+      assert(skipped, 'the name step was not skipped');
 
       const yes = cardButton(page, /כן, נגיע/);
       await yes.waitFor({ state: 'visible' });

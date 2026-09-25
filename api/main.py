@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from typing import Optional, List
 from datetime import datetime
 import os
@@ -58,12 +59,31 @@ def invite_url(token: str) -> str:
 
 
 def iso(value) -> Optional[str]:
-    """Serialise a datetime defensively — legacy rows can hold plain strings."""
+    """Serialise a datetime defensively — legacy rows can hold plain strings.
+
+    Stored datetimes are naive UTC (``datetime.utcnow``). Without an offset,
+    JavaScript's ``new Date()`` reads them as *local* time, so the admin panel
+    and the bot's export showed every answer three hours early in Israel.
+    """
     if value is None:
         return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.isoformat() + "+00:00"
+        return value.isoformat()
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return str(value)
+
+
+# Column widths from api.models. SQLite ignores VARCHAR lengths, Postgres does
+# not: an over-long value there is a DataError and the RSVP is lost with a 500.
+NAME_MAX = 255
+PHONE_MAX = 30
+
+
+def clip(value: Optional[str], limit: int) -> str:
+    return (value or "").strip()[:limit]
 
 
 class RSVPRequest(BaseModel):
@@ -81,7 +101,12 @@ class RSVPRequest(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("Name must not be empty.")
-        return v
+        return v[:NAME_MAX]
+
+    @field_validator("phone")
+    @classmethod
+    def phone_fits(cls, v: str) -> str:
+        return clip(v, PHONE_MAX)
 
     @field_validator("guests")
     @classmethod
@@ -107,7 +132,12 @@ class InviteCreate(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("Name must not be empty.")
-        return v
+        return v[:NAME_MAX]
+
+    @field_validator("phone")
+    @classmethod
+    def phone_fits(cls, v: str) -> str:
+        return clip(v, PHONE_MAX)
 
     @field_validator("side")
     @classmethod
@@ -129,7 +159,11 @@ def submit_rsvp(data: RSVPRequest):
     with get_session() as session:
         invite = None
         if data.invite_token:
-            invite = session.scalar(select(Invite).where(Invite.token == data.invite_token))
+            # Row-locked on Postgres (a no-op on SQLite): a double-tapped submit
+            # from the same personal link must not create two guest rows.
+            invite = session.scalar(
+                select(Invite).where(Invite.token == data.invite_token).with_for_update()
+            )
 
         # A personal link is editable: re-submitting it updates the row it
         # already created instead of adding a second one (which would
@@ -182,6 +216,7 @@ def submit_rsvp(data: RSVPRequest):
         "phone": data.phone,
         "side": side,
         "message": data.message,
+        "updated": updated,
     })
     return result
 
@@ -498,7 +533,14 @@ class SubscriberIn(BaseModel):
         v = str(v or "").strip()
         if not v:
             raise ValueError("chat_id must not be empty.")
+        if len(v) > 32:
+            raise ValueError("chat_id is too long.")
         return v
+
+    @field_validator("first_name", "username")
+    @classmethod
+    def names_fit(cls, v: str) -> str:
+        return clip(v, NAME_MAX)
 
 
 def subscriber_dict(s: Subscriber) -> dict:
@@ -524,18 +566,26 @@ def add_subscriber(data: SubscriberIn, x_admin_password: Optional[str] = Header(
     check_admin(x_admin_password)
     with get_session() as session:
         existing = session.get(Subscriber, data.chat_id)
-        if existing is not None:
-            # A blank name must not erase one we already know.
-            if data.first_name:
-                existing.first_name = data.first_name
-            if data.username:
-                existing.username = data.username
-            session.flush()
-            return {"created": False, "subscriber": subscriber_dict(existing)}
-        sub = Subscriber(chat_id=data.chat_id, first_name=data.first_name, username=data.username)
-        session.add(sub)
+        if existing is None:
+            sub = Subscriber(chat_id=data.chat_id, first_name=data.first_name, username=data.username)
+            session.add(sub)
+            try:
+                session.flush()
+                return {"created": True, "subscriber": subscriber_dict(sub)}
+            except IntegrityError:
+                # Telegram delivers updates concurrently: a double-tapped
+                # /start can race another request inserting the same chat.
+                session.rollback()
+                existing = session.get(Subscriber, data.chat_id)
+                if existing is None:
+                    raise
+        # A blank name must not erase one we already know.
+        if data.first_name:
+            existing.first_name = data.first_name
+        if data.username:
+            existing.username = data.username
         session.flush()
-        return {"created": True, "subscriber": subscriber_dict(sub)}
+        return {"created": False, "subscriber": subscriber_dict(existing)}
 
 
 @app.delete("/api/bot/subscribers/{chat_id}")
@@ -579,9 +629,17 @@ def put_bot_state(chat_id: str, body: BotStateIn, x_admin_password: Optional[str
         encoded = json.dumps(body.data, ensure_ascii=False)
         if state is None:
             session.add(BotState(chat_id=chat_id, data=encoded))
-        else:
-            state.data = encoded
-            state.updated_at = datetime.utcnow()
+            try:
+                session.flush()
+                return {"ok": True}
+            except IntegrityError:
+                # Two updates from the same chat racing to open its first flow.
+                session.rollback()
+                state = session.get(BotState, chat_id)
+                if state is None:
+                    raise
+        state.data = encoded
+        state.updated_at = datetime.utcnow()
         return {"ok": True}
 
 

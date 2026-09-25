@@ -3,6 +3,13 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 gsap.registerPlugin(ScrollTrigger);
 
+// Tweens follow the wall clock, not the frame count. GSAP's default lag
+// smoothing credits a slow frame (>500ms) with only 33ms, so on a machine
+// rendering WebGL in software (~1fps) every reveal crawled at a tenth of its
+// speed and the invitation stayed blank for minutes. Content must appear on
+// time however slow the frames are.
+gsap.ticker.lagSmoothing(0);
+
 /**
  * True when the visitor has asked their system for less motion. Checked at the
  * moment of animating rather than cached, so toggling the setting takes effect

@@ -26,9 +26,17 @@ function getBot() {
   return instance;
 }
 
-/** Read a JSON body whether Vercel has parsed it already or not. */
+/**
+ * Read a JSON body whether Vercel has parsed it already or not. Vercel parses
+ * by Content-Type: JSON becomes an object, but text/* arrives as a string and
+ * anything else as a Buffer — and by then the stream is drained, so reading
+ * it again would yield an empty body.
+ */
 async function readJson(req) {
-  if (req.body && typeof req.body === 'object') return req.body;
+  const body = req.body;
+  if (Buffer.isBuffer(body)) return body.length ? JSON.parse(body.toString('utf8')) : {};
+  if (typeof body === 'string') return body ? JSON.parse(body) : {};
+  if (body && typeof body === 'object') return body;
   const chunks = [];
   for await (const c of req) chunks.push(c);
   const raw = Buffer.concat(chunks).toString('utf8');

@@ -2,7 +2,7 @@ import { onMount, onCleanup } from 'solid-js';
 
 /**
  * Phone-only replacement for the live VineScene: the fully grown vines were
- * rendered offline (see scratchpad/capture_vine.mjs) into three transparent
+ * rendered offline (scripts/capture_vines.mjs) into three transparent
  * WebP strips — left edge, right edge and the top garland band. They scroll
  * with the page, "grow" via a scroll-driven clip-path, and sway with a cheap
  * CSS transform. Zero WebGL, zero GLB downloads on phones.
@@ -22,7 +22,9 @@ export default function VineStrips(props) {
     // from the capture, so the canes simply end where the capture ended.
     const fit = () => {
       const vw = document.documentElement.clientWidth;
-      const k = vw / set.width;
+      // Desktop fallback (software WebGL): keep the canes at a natural size
+      // along the edges instead of stretching a phone capture to the width.
+      const k = set.desktop ? 1.3 : vw / set.width;
       root.style.setProperty('--k', String(k));
       root.style.height = `${Math.min(docH(), Math.round(set.docH * k))}px`;
     };
@@ -80,12 +82,12 @@ export default function VineStrips(props) {
       <div class="vine-strips-inner" style="position:absolute; inset:0;">
       <img src={`${base}_left.webp`} alt="" decoding="async" style={strip('left')} />
       <img src={`${base}_right.webp`} alt="" decoding="async" style={strip('right')} />
-      <img
+      {!set.desktop && <img
         src={`${base}_top.webp`}
         alt=""
         decoding="async"
         style={`position:absolute; top:0; left:0; width:100%; height: calc(${set.top}px * var(--k, 1)); object-fit: cover; object-position: top center; animation: vine-sway-top 8s ease-in-out infinite;`}
-      />
+      />}
       </div>
     </div>
   );

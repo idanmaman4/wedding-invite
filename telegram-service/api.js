@@ -9,7 +9,9 @@
  * "this isn't exposed yet" reply instead of crashing.
  */
 
-const API_BASE = (process.env.API_BASE || 'https://wedding-invite-sand-kappa.vercel.app').replace(/\/+$/, '');
+// On Vercel only SITE_URL is set (the bot and the API are one deployment), so
+// it stands in for API_BASE; without either, the production alias.
+const API_BASE = (process.env.API_BASE || process.env.SITE_URL || 'https://wedding-invite-sand-kappa.vercel.app').replace(/\/+$/, '');
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const TIMEOUT_MS = Number(process.env.API_TIMEOUT_MS || 15000);
 
@@ -90,13 +92,18 @@ const num = (v, fallback = 0) => {
  * guests}. `guest_id` and `created_at` are extras the export needs to join an
  * invite to its RSVP row and to date it; both are optional in the payload.
  */
+/** A personal link in the one shape the site understands. */
+const inviteUrl = (token) => `${API_BASE}/?i=${encodeURIComponent(token)}`;
+
 function normalizeInvite(row) {
   return {
     token: row.token || '',
     name: (row.name || '').trim(),
     phone: (row.phone || '').trim(),
     side: row.side || '',
-    url: row.url || (row.token ? `${API_BASE}/i/${row.token}` : ''),
+    // The site reads the token from `?i=` (see src/store/rsvp.js); a `/i/<token>`
+    // path would open the home page with no invitation attached.
+    url: row.url || (row.token ? inviteUrl(row.token) : ''),
     responded: Boolean(row.responded),
     attending: row.attending === null || row.attending === undefined ? null : Boolean(row.attending),
     guests: num(row.guests, 0),
@@ -302,6 +309,7 @@ module.exports = {
   getGuests,
   getStats,
   createInvite,
+  inviteUrl,
   statsFromInvites,
   statsFromGuests,
   isRecoverable,

@@ -1003,10 +1003,11 @@ transformed = aPivot + vinePetalRotate(transformed - aPivot, vinePetalA);`);
     return placements;
   }
 
-  // ── Rose footprints (few dozen; plain list) so two blooms never bump ──
+  // ── Rose footprints (plain list) so blooms nestle into clusters, like a
+  // real climbing rose, but never sit one on top of another ──
   roseSpaceFree(x, y, r) {
     for (const o of this._roseSpots || []) {
-      const dx = o.x - x, dy = o.y - y, minD = (o.r + r) * 0.85;
+      const dx = o.x - x, dy = o.y - y, minD = (o.r + r) * 0.68;
       if (dx * dx + dy * dy < minD * minD) return false;
     }
     return true;
@@ -1227,7 +1228,7 @@ transformed = vineWindRot() * transformed;`);
       : layer === 1 ? [[-34, 6], [26, 8], [62, 36], [1, 12]]
       : [[48, 20], [-12, 34]];
     if (this.gut < 60 && !phone) stubs = stubs.slice(0, 3);
-    const roseCap = this.roseTier === 0 ? 1 : 2;
+    const roseCap = 2;
     stubs.forEach(([deg, baseD], k) => {
       const a0 = (deg + (rnd() - 0.5) * 12) * Math.PI / 180;
       const bend = 0.25 + rnd() * 0.45; // droops downward along its length
@@ -1283,12 +1284,12 @@ transformed = vineWindRot() * transformed;`);
     const uStart = crown.anchorU, uSpan = 0.02;
     this.buildTube(curve, side, layer, { radiusMul: 0.86 - layer * 0.1, minSeg: 48, uStart, uSpan, crown, taperEnd: 0.14 });
     this.scatterLeaves(curve, length, side, layer, crown, placements, { uStart, uSpan, stepMul: phone ? 0.85 : 0.72 });
-    const roseN = phone ? 2 : (layer === 0 ? 4 : 2);
+    const roseN = phone ? (layer === 0 ? 4 : 3) : (layer === 0 ? 5 : 3);
     for (let k = 0; k < roseN; k++) {
       const u = Math.min(0.74, 0.14 + k * (0.66 / roseN) + rnd() * 0.07); // never on the thin tip
       this.addRose(curve, u, side, layer, {
         bud: k % 2 === 1, off: (k % 2 ? -1 : 1) * (4 + rnd() * 3) * cs,
-        sizeMul: layer === 0 ? 1.45 : 1.25, uReveal: uStart + u * uSpan,
+        sizeMul: (layer === 0 ? 1.45 : 1.25) * (phone ? 1.12 : 1), uReveal: uStart + u * uSpan,
       });
     }
   }
@@ -1303,8 +1304,9 @@ transformed = vineWindRot() * transformed;`);
     if (layer === 0) {
       crownSpots = [{ d: 4, bud: true, off: 9 }, { d: 22, bud: true, off: -13 }, { d: 46, off: 11 }, { d: 92, bud: true, off: -8 }, { d: 138, off: 14 }];
       heroSpots = side === 'left' ? [0.48, 0.72] : [0.55, 0.85];
-      if (this.roseTier === 0) { crownSpots = crownSpots.slice(0, 3); heroSpots = heroSpots.slice(0, 1); }
-    } else if (layer === 1 && this.roseTier >= 1) {
+      // Phones keep the full crown clump: the corners are what frames the
+      // invitation, so they carry the most blooms at every width.
+    } else if (layer === 1) {
       crownSpots = [{ d: 12, bud: true, off: -10 }, { d: 60, off: 12 }];
       heroSpots = this.roseTier >= 2 ? (side === 'left' ? [0.62] : [0.97]) : [];
     } else if (layer === 2 && this.roseTier >= 2) {
@@ -1328,7 +1330,7 @@ transformed = vineWindRot() * transformed;`);
     // every ~150–260px depending on depth, seeded so sides/canes never line up.
     if (layer <= 2) {
       const vh = window.innerHeight;
-      const spacing = [32, 44, 56][layer] * (this.roseTier === 0 ? 1.15 : 1); // a bloom every few centimetres of cane
+      const spacing = [28, 40, 52][layer]; // a bloom every few centimetres of cane
       const seedRnd = mulberry32(0xA5E5 + layer * 31 + (side === 'left' ? 0 : 977));
       let y = vh * 0.55 + seedRnd() * spacing;
       let k = 0;
@@ -1336,7 +1338,10 @@ transformed = vineWindRot() * transformed;`);
         const u = uAtPageY(curve, y);
         const bud = seedRnd() < 0.30; // mostly open blooms so the colour reads
         const off = (k % 2 === 0 ? 1 : -1) * (2 + seedRnd() * 3) * cs;
-        this.addRose(curve, Math.min(0.999, u), side, layer, { bud, off, sizeMul: [0.74, 0.66, 0.58][layer] }); // big enough for the colour to read at a glance
+        // Phones draw at ~0.55x scale, so their blooms get a boost to stay
+        // readable as roses rather than pink dots.
+        const phoneBoost = this.roseTier === 0 ? 1.3 : 1;
+        this.addRose(curve, Math.min(0.999, u), side, layer, { bud, off, sizeMul: [0.8, 0.7, 0.6][layer] * phoneBoost }); // big enough for the colour to read at a glance
         y += spacing * (0.75 + seedRnd() * 0.5);
         k++;
       }

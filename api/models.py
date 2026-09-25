@@ -23,6 +23,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.pool import NullPool
 
 
 def sqlite_path() -> str:
@@ -33,7 +34,7 @@ def sqlite_path() -> str:
     cold starts). Set DATABASE_URL to a Postgres DSN for real persistence —
     without it, submissions on Vercel survive only as long as the instance.
     """
-    if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    if is_serverless():
         return "/tmp/wedding.db"
     return os.path.join(os.path.dirname(__file__), "..", "wedding.db")
 
@@ -126,15 +127,58 @@ class BotState(Base):
 
 engine = None
 SessionLocal = None
+# Whether create_all/migrations have run against the current engine. Kept
+# separate from the engine so a database that is briefly unreachable at cold
+# start does not take the whole function down — the next request retries.
+_schema_ready = False
+
+# Query parameters some hosts put in their connection strings that libpq (and
+# so psycopg2) rejects outright with "invalid dsn". `pgbouncer=true` is what
+# Supabase's pooler string carries for Prisma; the rest are Prisma's too.
+_NON_LIBPQ_PARAMS = {"pgbouncer", "connection_limit", "pool_timeout", "schema", "statement_cache_size"}
+
+
+def is_serverless() -> bool:
+    return bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
+
+def normalize_database_url(url: str) -> str:
+    """Make a hosted Postgres DSN something SQLAlchemy + psycopg2 accept.
+
+    - ``postgres://`` (Heroku/Supabase/Neon spelling) → ``postgresql://``;
+    - Prisma-only query parameters are dropped, everything libpq knows
+      (``sslmode``, ``channel_binding``, ``options``…) is kept as is.
+    """
+    url = (url or "").strip()
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if "?" in url and url.startswith("postgresql"):
+        base, _, query = url.partition("?")
+        kept = [
+            pair for pair in query.split("&")
+            if pair and pair.split("=", 1)[0].lower() not in _NON_LIBPQ_PARAMS
+        ]
+        url = base + ("?" + "&".join(kept) if kept else "")
+    return url
 
 
 def build_engine():
-    database_url = os.environ.get("DATABASE_URL", "")
+    database_url = normalize_database_url(os.environ.get("DATABASE_URL", ""))
     if database_url:
-        # SQLAlchemy 2 needs the driver-qualified scheme that psycopg2 uses.
-        if database_url.startswith("postgres://"):
-            database_url = "postgresql://" + database_url[len("postgres://"):]
-        return create_engine(database_url, pool_pre_ping=True, future=True)
+        kwargs = {"pool_pre_ping": True, "future": True}
+        if database_url.startswith("postgresql"):
+            # Fail fast instead of hanging until the platform kills the request.
+            kwargs["connect_args"] = {"connect_timeout": 10}
+        if is_serverless():
+            # A serverless instance is frozen between requests and may never
+            # come back; a pooled connection it holds is a slot the database
+            # (or Supabase/Neon's pgbouncer) cannot give anyone else. One
+            # connection per request, closed at the end, is the safe shape.
+            kwargs["poolclass"] = NullPool
+            kwargs["pool_pre_ping"] = False  # every connection is brand new
+        else:
+            kwargs["pool_recycle"] = 300
+        return create_engine(database_url, **kwargs)
     return create_engine(
         f"sqlite:///{sqlite_path()}",
         # FastAPI may serve a request on a different thread than the one that
@@ -144,16 +188,44 @@ def build_engine():
     )
 
 
+def ensure_schema() -> None:
+    """Run column migrations and create missing tables, once per engine."""
+    global _schema_ready
+    if _schema_ready:
+        return
+    _migrate_missing_columns()
+    try:
+        Base.metadata.create_all(engine)
+    except Exception:
+        # Two cold starts racing to CREATE TABLE on Postgres: the loser gets a
+        # duplicate-object error although the table is now there. One retry
+        # sees it and creates nothing.
+        Base.metadata.create_all(engine)
+    _schema_ready = True
+
+
 def setup_db(url: Optional[str] = None):
-    """Create the engine, run column migrations and create missing tables."""
-    global engine, SessionLocal
+    """Create the engine, run column migrations and create missing tables.
+
+    With an explicit ``url`` (tests) a failure raises. Without one (the app at
+    import time) an unreachable database is logged and retried on the next
+    request instead of crashing the import, which would 500 every endpoint —
+    /api/health included — until the instance recycles.
+    """
+    global engine, SessionLocal, _schema_ready
     if url:
         engine = create_engine(url, connect_args={"check_same_thread": False}, future=True)
     else:
         engine = build_engine()
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    _migrate_missing_columns()
-    Base.metadata.create_all(engine)
+    _schema_ready = False
+    if url:
+        ensure_schema()
+    else:
+        try:
+            ensure_schema()
+        except Exception as exc:  # pragma: no cover - exercised via test with a bad DSN
+            print(f"[db] schema setup deferred: {type(exc).__name__}: {exc}")
     return engine
 
 
@@ -162,6 +234,7 @@ def get_session():
     """Session scope that commits on success and always closes."""
     if SessionLocal is None:
         setup_db()
+    ensure_schema()
     session = SessionLocal()
     try:
         yield session
@@ -179,8 +252,8 @@ _LATE_COLUMNS = {
     "guests": [
         ("guests", "INTEGER NOT NULL DEFAULT 1"),
         ("phone", "VARCHAR(30) NOT NULL DEFAULT ''"),
-        ("whatsapp_sent_idan", "BOOLEAN NOT NULL DEFAULT 0"),
-        ("whatsapp_sent_vered", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("whatsapp_sent_idan", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("whatsapp_sent_vered", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("dietary", "TEXT NOT NULL DEFAULT ''"),
         ("message", "TEXT NOT NULL DEFAULT ''"),
     ],

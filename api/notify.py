@@ -59,7 +59,7 @@ def notify_rsvp(payload: Dict[str, Any]) -> None:
     Serverless hosts may freeze the instance before the thread finishes; that
     is an accepted trade-off for never delaying the guest's response.
 
-    payload keys: name, attending, guests, phone, side, message.
+    payload keys: name, attending, guests, phone, side, message, updated.
     """
     url = os.environ.get("NOTIFY_URL", "").strip()
     secret = os.environ.get("NOTIFY_SECRET", "").strip()
@@ -74,6 +74,8 @@ def notify_rsvp(payload: Dict[str, Any]) -> None:
             "phone": payload.get("phone", "") or "",
             "side": payload.get("side", "") or "",
             "message": payload.get("message", "") or "",
+            # A personal link re-submitted: an edit, not one more RSVP.
+            "updated": bool(payload.get("updated")),
         }
         if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
             # A serverless instance is frozen the moment the response goes out,

@@ -59,8 +59,15 @@ Without `DATABASE_URL` the API falls back to SQLite. That is fine locally, but o
 Vercel the deployment is read-only apart from `/tmp`, so the file lives in `/tmp`
 and **is wiped whenever the instance recycles** — RSVPs would disappear.
 
-For the real invitation, create a free Postgres database (Vercel Storage → Postgres,
-or Neon) and set its connection string:
+**Production uses Supabase** (project `wedding-invite`, us-east-1, next to the
+Vercel functions in iad1). The app connects as its own role, `wedding_app`,
+through the transaction pooler (`aws-0-us-east-1.pooler.supabase.com:6543`), and
+its tables live in a private `wedding` schema (the role's `search_path`) that
+Supabase's public Data API does not expose. `DATABASE_URL` is set for Production
+only, so preview deployments never write to the real guest list. Tables are
+created on the first request.
+
+To point it at a different database, set its connection string:
 
 ```bash
 npx vercel env add DATABASE_URL production      # paste the postgres:// URL
@@ -196,15 +203,24 @@ The heaviest 3D work is rendered ahead of time so phones do not pay for it:
   (`public/media/vine_<width>_*.webp`) listed in `src/vineSets.json`. Screens under
   768px use those; wider screens run the live scene.
 
-Both are regenerated with the scripts described in the project memory notes after
-any change to the Blender models. Append `?live=1` or `?vine=live` to the URL to
-force the live WebGL versions.
+After any change to the vine scene or the Blender models, regenerate the strips
+(needs the dev server on port 5199 and a GPU-backed Chromium):
+
+```bash
+npm run dev -- --port 5199                       # in another terminal
+node scripts/capture_vines.mjs /tmp/vines
+.venv/bin/python scripts/stitch_vines.py /tmp/vines   # writes public/media + src/vineSets.json
+```
+
+Desktops whose WebGL runs in software (hardware acceleration off, blocklisted
+GPU) also get the strips instead of the live scenes, which run at ~1fps there.
+Append `?live=1` or `?vine=live` to the URL to force the live WebGL versions.
 
 ## Tests
 
 ```bash
-python -m pytest                                     # API: 82 tests, incl. integration
-cd telegram-service && npm test                      # bot: 153 tests
+python -m pytest                                     # API: 112 tests, incl. integration
+cd telegram-service && npm test                      # bot: 172 tests
 cd whatsapp-service && npm test                      # sender: 40 tests
 node tests/e2e/run.mjs                               # browser end-to-end
 ```

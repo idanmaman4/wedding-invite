@@ -83,6 +83,7 @@ function exportTimezone(env = process.env) {
   return DEFAULT_TZ;
 }
 
+const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const digits = (s) => String(s == null ? '' : s).replace(/\D+/g, '');
 const normName = (s) => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -116,10 +117,22 @@ function humanDate(date = new Date(), tz = exportTimezone()) {
   return `${p.day}/${p.month}/${p.year}`;
 }
 
+/**
+ * Parse an API timestamp. The API stores naive UTC; an ISO string without an
+ * offset is read by `new Date()` as *local* time, which on a laptop in Israel
+ * shifts every answer three hours (and can move it across the 24h window).
+ */
+function parseDate(value) {
+  if (value instanceof Date) return value;
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) return new Date(`${s.replace(' ', 'T')}Z`);
+  return new Date(s);
+}
+
 /** `04/09/2026 19:30` for a cell, or '' when the value is not a real date. */
 function humanDateTime(value, tz = exportTimezone()) {
   if (!value) return '';
-  const d = value instanceof Date ? value : new Date(value);
+  const d = parseDate(value);
   if (Number.isNaN(d.getTime())) return String(value);
   const p = parts(d, tz);
   return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}`;
@@ -141,7 +154,13 @@ function mergeRsvps(invites = [], guests = []) {
   const byName = new Map();
 
   for (const inv of invites) {
-    if (inv.guest_id !== null && inv.guest_id !== undefined) byGuestId.set(String(inv.guest_id), inv);
+    if (inv.guest_id !== null && inv.guest_id !== undefined) {
+      byGuestId.set(String(inv.guest_id), inv);
+      // Already bound to its own RSVP row: it must not also be claimed by a
+      // walk-in who happens to share the name or phone (that walk-in would be
+      // filed under this invite's side and the invite counted twice).
+      continue;
+    }
     const d = digits(inv.phone);
     if (d.length >= 7 && !byPhone.has(d)) byPhone.set(d, inv);
     const n = normName(inv.name);
@@ -251,7 +270,7 @@ function summarize({ invites = [], guests = [], stats = null, now = new Date() }
   let last24h = 0;
   for (const row of rows) {
     if (!row.date) continue;
-    const t = new Date(row.date).getTime();
+    const t = parseDate(row.date).getTime();
     if (Number.isFinite(t) && t >= dayAgo && t <= at.getTime() + 60 * 1000) last24h += 1;
   }
 
@@ -362,7 +381,8 @@ function fallbackNotice(err, { now = new Date(), tz } = {}) {
     `⚠️ <b>הדוח היומי (${humanDate(now, tz || exportTimezone())}) לא נוצר</b>`,
     '',
     'ה-API של האתר לא החזיר נתונים, אז לא נשלח קובץ.',
-    `סיבה: ${reason}`,
+    // Sent as HTML; the reason can quote a raw response body.
+    `סיבה: ${escHtml(reason)}`,
     '',
     'אפשר לנסות שוב עם /export אחרי שהאתר יתעדכן.',
   ].join('\n');
@@ -476,6 +496,7 @@ module.exports = {
   isoDate,
   humanDate,
   humanDateTime,
+  parseDate,
   exportFileName,
   mergeRsvps,
   pendingInvites,

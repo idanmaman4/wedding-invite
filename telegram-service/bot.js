@@ -91,14 +91,19 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
     return false;
   }
 
-  /** Turn any API failure into a readable Hebrew line instead of a crash. */
+  /**
+   * Turn any API failure into a readable Hebrew line instead of a crash. The
+   * result is sent as HTML, and an error message can quote a response body
+   * (`<`, `&`…) — unescaped, Telegram rejects the whole reply and the
+   * person sees nothing at all.
+   */
   function apiErrorMessage(err, what) {
     if (err instanceof api.ApiError) {
-      if (err.missing) return `⚠️ ה-API עדיין לא חושף ${what}. נסו שוב אחרי שהאתר יתעדכן.`;
+      if (err.missing) return `⚠️ ה-API עדיין לא חושף ${fmt.esc(what)}. נסו שוב אחרי שהאתר יתעדכן.`;
       if (err.unauthorized) return '⚠️ סיסמת המנהל שגויה — בדקו את ADMIN_PASSWORD בשירות.';
-      return `⚠️ ${err.message}`;
+      return `⚠️ ${fmt.esc(err.message)}`;
     }
-    return `⚠️ שגיאה לא צפויה: ${err && err.message ? err.message : err}`;
+    return `⚠️ שגיאה לא צפויה: ${fmt.esc(err && err.message ? err.message : err)}`;
   }
 
   /**
@@ -117,11 +122,19 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
   bot.command('start', async (ctx) => {
     const chat = ctx.chat;
     const from = ctx.from || {};
-    const isNew = await store.add({
-      chat_id: chat.id,
-      first_name: from.first_name || chat.first_name || '',
-      username: from.username || chat.username || '',
-    });
+    let isNew;
+    try {
+      isNew = await store.add({
+        chat_id: chat.id,
+        first_name: from.first_name || chat.first_name || '',
+        username: from.username || chat.username || '',
+      });
+    } catch (err) {
+      // Saying nothing would leave them believing they are subscribed.
+      log.error('[start] could not save the subscriber:', err && err.message ? err.message : err);
+      await ctx.reply(`⚠️ לא הצלחתי לשמור את ההרשמה — נסו /start שוב בעוד רגע.\n${apiErrorMessage(err, 'רשימת המנויים')}`, HTML);
+      return;
+    }
 
     const lines = [
       `שלום ${fmt.esc(from.first_name || '')} 👋`,
@@ -338,7 +351,10 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
       return;
     }
 
-    const header = `🔍 <b>תוצאות עבור</b> "${fmt.esc(query)}" — ${lines.length}`;
+    // The query is echoed in every chunk's header; a pasted wall of text would
+    // push each one past Telegram's 4096 and the whole answer would be lost.
+    const shown = query.length > 100 ? `${query.slice(0, 99)}…` : query;
+    const header = `🔍 <b>תוצאות עבור</b> "${fmt.esc(shown)}" — ${lines.length}`;
     const messages = fmt.chunk(header, lines);
     if (problems.length) messages.push(problems.join('\n'));
     await replyChunks(ctx, messages, ui.backToMenu());
@@ -406,7 +422,7 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
     await ui.endFlow(ctx.chat.id);
     try {
       const invite = await api.createInvite({ name, phone: phone || '', side });
-      const url = invite.url || `${api.API_BASE}/i/${invite.token}`;
+      const url = invite.url || api.inviteUrl(invite.token);
       await ctx.reply(
         `✅ נוצרה הזמנה ל<b>${fmt.esc(name)}</b>\n` +
           `👥 צד ${fmt.esc(fmt.sideLabel(side))}\n` +
@@ -603,7 +619,13 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
         sent += 1;
       } catch (err) {
         if (isDeadChat(err)) {
-          await store.remove(sub.chat_id);
+          // A failed prune must not abort the loop: everyone after this chat
+          // would miss the RSVP.
+          try {
+            await store.remove(sub.chat_id);
+          } catch (removeErr) {
+            log.error(`[broadcast] could not remove ${sub.chat_id}:`, removeErr && removeErr.message);
+          }
           dropped += 1;
           log.log(`[broadcast] removed unreachable subscriber ${sub.chat_id}`);
         } else {

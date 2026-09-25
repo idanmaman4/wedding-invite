@@ -134,21 +134,42 @@ function formatStats(stats) {
   return lines.join('\n');
 }
 
+/** Cut a free-text field so one message can never pass Telegram's 4096. */
+function clip(text, max) {
+  const s = String(text == null ? '' : text).trim();
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+// The API does not bound the blessing. Over Telegram's limit the send fails
+// with a 400 — for every subscriber — and the RSVP is never announced.
+const NOTIFY_NAME_MAX = 200;
+const NOTIFY_MESSAGE_MAX = 3000;
+
 /** The broadcast sent to every subscriber when an RSVP lands. */
 function formatRsvpNotification(payload) {
-  const name = esc((payload.name || '').trim() || 'אורח/ת');
+  const name = esc(clip(payload.name, NOTIFY_NAME_MAX) || 'אורח/ת');
   const guests = Number(payload.guests) > 0 ? Number(payload.guests) : 1;
   const sideKey = payload.side ? esc(sideLabel(payload.side)) : '';
   const attending = payload.attending === true || payload.attending === 'true' || payload.attending === 1;
 
+  // A personal link opened again: the answer was edited, not added — say so,
+  // or the couple count the same party twice.
+  const updated = payload.updated === true || payload.updated === 'true';
+
   const lines = [];
-  if (attending) {
+  if (updated) {
+    lines.push(
+      attending
+        ? `✏️ <b>עדכון אישור הגעה</b> — ${name}, ${guests} אורחים${sideKey ? `, צד ${sideKey}` : ''}`
+        : `✏️ <b>עדכון:</b> <b>${name}</b> לא יוכלו להגיע${sideKey ? ` (צד ${sideKey})` : ''}`,
+    );
+  } else if (attending) {
     lines.push(`🎉 <b>אישור הגעה חדש</b> — ${name}, ${guests} אורחים${sideKey ? `, צד ${sideKey}` : ''}`);
   } else {
     lines.push(`😔 <b>${name}</b> לא יוכלו להגיע${sideKey ? ` (צד ${sideKey})` : ''}`);
   }
-  if (payload.phone) lines.push(`📞 ${esc(payload.phone)}`);
-  const blessing = (payload.message || '').trim();
+  if (payload.phone) lines.push(`📞 ${esc(clip(payload.phone, 40))}`);
+  const blessing = clip(payload.message, NOTIFY_MESSAGE_MAX);
   if (blessing) lines.push('', `💌 <i>${esc(blessing)}</i>`);
   return lines.join('\n');
 }
