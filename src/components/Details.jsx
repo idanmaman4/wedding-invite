@@ -4,7 +4,7 @@ import { gsap } from '../animations/gsapSetup';
 // `lines` renders the card's main value as stacked lines (same .detail-value
 // element, so the reveal animation is unchanged). `links` adds small gold
 // outline link-buttons under the description (venue navigation).
-const details = [
+export const details = [
   {
     icon: '◇',
     label: 'התאריך',

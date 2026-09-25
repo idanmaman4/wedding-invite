@@ -472,7 +472,7 @@ async function main() {
     assertEqual(inv.guests, 4, 'party size on the invite');
   });
 
-  await test('a personal link answers once; re-opening it shows the invitation and the answer, not the form', async () => {
+  await test('a personal link answers once; re-opening it shows only the details and the answer, no form or animation', async () => {
     const token = await createInvite('עונה פעם אחת', '0507776665', 'idan');
 
     await withPage(async (page) => {
@@ -496,11 +496,25 @@ async function main() {
       await page.getByText('תודה, קיבלנו את תשובתכם').first().waitFor({ state: 'visible', timeout: 30000 });
       const body = await page.textContent('body');
       assert(body.includes('אישרתם הגעה של 2 אורחים'), 'the stored answer is not shown');
-      assert(body.includes('25 באוקטובר 2026'), 'the invitation details are not shown');
-      assertEqual(await cardButton(page, /אישור הגעה|שליחה/).count(), 0, 'the form is still offered');
+      for (const detail of ['י״ד בחשוון תשפ״ז', '19:30', 'אולם האירועים תרין', 'אלגנטי חגיגי']) {
+        assert(body.includes(detail), `the invitation detail "${detail}" is missing`);
+      }
+      assertEqual(await page.locator('button').count(), 0, 'the form (or any button) is still offered');
       const ics = page.locator('a[href$=".ics"]').first();
       assert(await ics.isVisible(), 'an attending guest should get the calendar button');
-    }, { url: `${siteBase}/?i=${token}` });
+      // Just the details: no rings, vines or procession, and no automatic
+      // scroll (the invitation page nudges to the RSVP card after ~5s).
+      await page.waitForTimeout(7000);
+      const still = await page.evaluate(() => ({
+        canvases: document.querySelectorAll('canvas').length,
+        videos: document.querySelectorAll('video').length,
+        vines: document.querySelectorAll('.vine-strips').length,
+        scrollY: window.scrollY,
+      }));
+      assertEqual(still.canvases, 0, 'a 3D scene was started');
+      assertEqual(still.videos + still.vines, 0, 'the procession or the vines were loaded');
+      assertEqual(still.scrollY, 0, 'the page scrolled by itself');
+    }, { url: `${siteBase}/?i=${token}`, ready: false });
 
     // A second answer straight at the API (another tab) is refused too.
     const again = await apiJson('/api/rsvp', {
