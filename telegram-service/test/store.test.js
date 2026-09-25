@@ -1,43 +1,38 @@
 'use strict';
 
 /**
- * The subscriber registry, both backends.
+ * The subscriber registry and the flow state, both behind the admin API.
  *
- * The file backend is exercised against a real throwaway JSON file so the
- * atomic write and the corrupt-file recovery are actually tested on disk. The
- * API backend is exercised against a local HTTP server standing in for the
- * site, so the request shapes are what the Python side really receives.
+ * A local HTTP server stands in for the site. Explicit routes pin the exact
+ * request shapes the Python side receives (and its failures); everything else
+ * falls through to test/helpers/bot-db.js, an in-memory copy of the bot's
+ * tables with the real endpoints' responses, so the registry's behaviour is
+ * exercised end to end.
  */
 
 const test = require('node:test');
 const { before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const http = require('node:http');
+const { createBotDb } = require('./helpers/bot-db');
 
-let dir;
-let file;
 let store;
+let ui;
 let server;
 let routes = {};
 let calls = [];
+const botDb = createBotDb();
 
 before(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wedding-store-'));
-  file = path.join(dir, 'subscribers.json');
-  process.env.TELEGRAM_SUBSCRIBERS_FILE = file;
-  process.env.BOT_STORE = 'file';
-
   server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
       const key = `${req.method} ${req.url}`;
-      calls.push({ key, body: raw ? JSON.parse(raw) : null, headers: req.headers });
-      const route = routes[key];
+      const body = raw ? JSON.parse(raw) : null;
+      calls.push({ key, body, headers: req.headers });
+      const route = routes[key] || botDb.handle(req.method, req.url, body);
       res.writeHead(route ? route.status || 200 : 404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(route ? route.body : { error: 'missing' }));
     });
@@ -47,44 +42,47 @@ before(async () => {
   process.env.ADMIN_PASSWORD = 'pw';
 
   store = require('../store');
+  ui = require('../ui');
 });
 
 after(async () => {
-  fs.rmSync(dir, { recursive: true, force: true });
   await new Promise((r) => server.close(r));
 });
 
 beforeEach(() => {
-  process.env.BOT_STORE = 'file';
-  fs.rmSync(file, { force: true });
   routes = {};
   calls = [];
+  botDb.reset();
 });
 
-// ─── Backend selection ───────────────────────────────────────────────────────
+// ─── Where it lives ──────────────────────────────────────────────────────────
 
-test('the file backend is the default off Vercel; the API backend on it', () => {
-  delete process.env.BOT_STORE;
-  delete process.env.VERCEL;
-  assert.equal(store.backend(), 'file');
-  process.env.VERCEL = '1';
-  assert.equal(store.backend(), 'api');
-  delete process.env.VERCEL;
-  process.env.BOT_STORE = 'api';
-  assert.equal(store.backend(), 'api', 'an explicit setting wins');
-  process.env.BOT_STORE = 'file';
+test('the registry is always the database, on Vercel or off it', () => {
+  const saved = { VERCEL: process.env.VERCEL, BOT_STORE: process.env.BOT_STORE };
+  try {
+    delete process.env.VERCEL;
+    process.env.BOT_STORE = 'file'; // a leftover setting from the old file store
+    assert.equal(store.backend(), 'api');
+    process.env.VERCEL = '1';
+    assert.equal(store.backend(), 'api');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 });
 
-// ─── File backend ────────────────────────────────────────────────────────────
-
-test('the registry file is the one the environment points at', () => {
-  assert.equal(store.FILE, file);
+test('the old file-store knobs are gone from the module', () => {
+  assert.equal(store.FILE, undefined);
+  assert.deepEqual(Object.keys(store).sort(), ['add', 'all', 'backend', 'has', 'remove']);
 });
 
-test('a registry that does not exist yet reads as empty', async () => {
+// ─── Behaviour, against the in-memory tables ────────────────────────────────
+
+test('an empty registry reads as empty', async () => {
   assert.deepEqual(await store.all(), []);
   assert.equal(await store.has(123), false);
-  assert.equal(fs.existsSync(file), false, 'reading must not create the file');
 });
 
 test('add stores the subscriber and reports it as new exactly once', async () => {
@@ -93,7 +91,7 @@ test('add stores the subscriber and reports it as new exactly once', async () =>
   assert.equal((await store.all()).length, 1);
 
   const [s] = await store.all();
-  assert.equal(s.chat_id, 111);
+  assert.equal(s.chat_id, '111', 'the database keys chats by their id as text');
   assert.equal(s.first_name, 'עידן');
   assert.equal(s.username, 'idan');
   assert.ok(!Number.isNaN(Date.parse(s.subscribed_at)), 'subscribed_at is an ISO timestamp');
@@ -132,50 +130,20 @@ test('remove drops a subscriber and says whether it did anything', async () => {
 
   assert.equal(await store.remove('555'), true);
   assert.equal(await store.remove('555'), false, 'removing twice is a no-op');
-  assert.deepEqual((await store.all()).map((s) => s.chat_id), [666]);
+  assert.deepEqual((await store.all()).map((s) => s.chat_id), ['666']);
 });
 
-test('the registry survives a process restart, because it is on disk', async () => {
-  await store.add({ chat_id: 777, first_name: 'משה' });
-  const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
-  assert.equal(onDisk.length, 1);
-  assert.equal(onDisk[0].chat_id, 777);
+test('removing a subscriber also drops their half-finished flow', async () => {
+  await store.add({ chat_id: 888 });
+  await ui.startFlow(888, 'invite');
+  assert.ok(await ui.getFlow(888));
+  await store.remove(888);
+  assert.equal(await ui.getFlow(888), null);
 });
 
-test('a corrupt registry is treated as empty instead of taking the bot down', async () => {
-  fs.writeFileSync(file, '{ this is not json', 'utf8');
-  assert.deepEqual(await store.all(), []);
-  // and it recovers: the next add rewrites a valid file
-  assert.equal(await store.add({ chat_id: 888 }), true);
-  assert.deepEqual((await store.all()).map((s) => s.chat_id), [888]);
-});
+// ─── Request shapes and failures ─────────────────────────────────────────────
 
-test('rows without a chat id are ignored', async () => {
-  fs.writeFileSync(file, JSON.stringify([{ chat_id: 1 }, { first_name: 'no id' }, null, { chat_id: null }]), 'utf8');
-  assert.deepEqual((await store.all()).map((s) => s.chat_id), [1]);
-});
-
-test('a registry holding something other than an array reads as empty', async () => {
-  fs.writeFileSync(file, JSON.stringify({ chat_id: 1 }), 'utf8');
-  assert.deepEqual(await store.all(), []);
-});
-
-test('the write is atomic — no .tmp file is left behind', async () => {
-  await store.add({ chat_id: 999 });
-  assert.equal(fs.existsSync(`${file}.tmp`), false);
-});
-
-test('hand-edits made while the bot runs are picked up on the next read', async () => {
-  await store.add({ chat_id: 1 });
-  fs.writeFileSync(file, JSON.stringify([{ chat_id: 1 }, { chat_id: 2, first_name: 'הוסף ביד' }]), 'utf8');
-  assert.equal((await store.all()).length, 2, 'the file is re-read on every access');
-  assert.equal(await store.has(2), true);
-});
-
-// ─── API backend ─────────────────────────────────────────────────────────────
-
-test('api: add posts the subscriber with the admin password and reports created', async () => {
-  process.env.BOT_STORE = 'api';
+test('add posts the subscriber with the admin password and reports created', async () => {
   routes['POST /api/bot/subscribers'] = { body: { created: true, subscriber: { chat_id: '42' } } };
 
   assert.equal(await store.add({ chat_id: 42, first_name: 'עידן', username: 'idan' }), true);
@@ -185,10 +153,10 @@ test('api: add posts the subscriber with the admin password and reports created'
 
   routes['POST /api/bot/subscribers'] = { body: { created: false, subscriber: { chat_id: '42' } } };
   assert.equal(await store.add({ chat_id: 42 }), false, 'a second add is not new');
+  assert.deepEqual(calls.at(-1).body, { chat_id: '42', first_name: '', username: '' }, 'missing names go as blanks');
 });
 
-test('api: all and has read the list from the site', async () => {
-  process.env.BOT_STORE = 'api';
+test('all and has read the list from the site', async () => {
   routes['GET /api/bot/subscribers'] = { body: [{ chat_id: '1' }, { chat_id: '2' }] };
 
   assert.deepEqual((await store.all()).map((s) => s.chat_id), ['1', '2']);
@@ -196,23 +164,77 @@ test('api: all and has read the list from the site', async () => {
   assert.equal(await store.has(3), false);
 });
 
-test('api: remove deletes by chat id and reports whether anything went', async () => {
-  process.env.BOT_STORE = 'api';
+test('a response that is not a list reads as no subscribers', async () => {
+  routes['GET /api/bot/subscribers'] = { body: { chat_id: '1' } };
+  assert.deepEqual(await store.all(), []);
+});
+
+test('remove deletes by chat id and reports whether anything went', async () => {
   routes['DELETE /api/bot/subscribers/7'] = { body: { removed: true } };
   assert.equal(await store.remove(7), true);
   routes['DELETE /api/bot/subscribers/7'] = { body: { removed: false } };
   assert.equal(await store.remove(7), false);
 });
 
-test('api: a rejected password surfaces instead of reading as "no subscribers"', async () => {
-  process.env.BOT_STORE = 'api';
+test('a chat id is escaped in the path', async () => {
+  await store.remove('a/b');
+  assert.equal(calls.at(-1).key, 'DELETE /api/bot/subscribers/a%2Fb');
+});
+
+test('a rejected password surfaces instead of reading as "no subscribers"', async () => {
   routes['GET /api/bot/subscribers'] = { status: 401, body: { detail: 'Unauthorized' } };
   await assert.rejects(() => store.all(), (err) => err.unauthorized === true);
 });
 
-test('api: the file on disk is never touched', async () => {
-  process.env.BOT_STORE = 'api';
-  routes['POST /api/bot/subscribers'] = { body: { created: true } };
-  await store.add({ chat_id: 5 });
-  assert.equal(fs.existsSync(file), false);
+test('a database outage on add surfaces instead of claiming success', async () => {
+  routes['POST /api/bot/subscribers'] = { status: 500, body: { detail: 'db down' } };
+  await assert.rejects(() => store.add({ chat_id: 9 }));
+});
+
+// ─── Flow state ──────────────────────────────────────────────────────────────
+
+test('a flow is written, read back and cleared through /api/bot/state', async () => {
+  const started = await ui.startFlow(12, 'invite', { name: 'דנה' });
+  const put = calls.find((c) => c.key === 'PUT /api/bot/state/12');
+  assert.deepEqual(put.body, { data: started }, 'the whole state goes as `data`');
+  assert.equal(put.headers['x-admin-password'], 'pw');
+
+  const read = await ui.getFlow(12);
+  assert.equal(read.flow, 'invite');
+  assert.deepEqual(read.data, { name: 'דנה' });
+
+  await ui.advanceFlow(12, { step: 2, data: { phone: '050' } });
+  const advanced = await ui.getFlow(12);
+  assert.equal(advanced.step, 2);
+  assert.deepEqual(advanced.data, { name: 'דנה', phone: '050' });
+
+  await ui.endFlow(12);
+  assert.ok(calls.some((c) => c.key === 'DELETE /api/bot/state/12'));
+  assert.equal(await ui.getFlow(12), null);
+});
+
+test('no stored state (a 404) reads as no flow', async () => {
+  assert.equal(await ui.getFlow(13), null);
+  assert.equal(await ui.advanceFlow(13, { step: 1 }), null, 'nothing to advance');
+});
+
+test('a stored row without a flow in it reads as no flow', async () => {
+  routes['GET /api/bot/state/14'] = { body: { chat_id: '14', data: {} } };
+  assert.equal(await ui.getFlow(14), null);
+});
+
+test('a stale flow is forgotten and deleted from the database', async () => {
+  botDb.states.set('15', JSON.stringify({ flow: 'search', step: 0, data: {}, at: Date.now() - ui.FLOW_TTL_MS - 1000 }));
+  assert.equal(await ui.getFlow(15), null);
+  assert.equal(botDb.states.has('15'), false);
+});
+
+test('a state-read failure other than 404 surfaces', async () => {
+  routes['GET /api/bot/state/16'] = { status: 500, body: { detail: 'db down' } };
+  await assert.rejects(() => ui.getFlow(16));
+});
+
+test('flows belong to one chat each', async () => {
+  await ui.startFlow(17, 'invite');
+  assert.equal(await ui.getFlow(18), null);
 });

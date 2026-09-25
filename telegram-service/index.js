@@ -11,6 +11,11 @@
  * under api/telegram/, where Telegram pushes updates to a webhook and Vercel's
  * cron fires the daily export.
  *
+ * Subscribers and half-finished flows are not kept here: like the Vercel
+ * functions, this process reads and writes them in the site's database through
+ * the admin API, so it needs ADMIN_PASSWORD and an API_BASE (or SITE_URL) that
+ * points at the deployed site.
+ *
  * The token comes from the environment only and is never logged.
  */
 

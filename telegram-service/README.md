@@ -11,7 +11,11 @@ A small Node service that does two things for the wedding site:
    as a Telegram document, with a Hebrew caption summarising the day.
    `/export` and `/exportall` do the same on demand.
 
-No database: subscribers live in `subscribers.json` (gitignored) next to the code.
+No local storage: subscribers and half-finished button flows are rows in the
+site's database (Supabase), read and written through the admin API
+(`/api/bot/subscribers`, `/api/bot/state`). That is true however the bot runs —
+as Vercel functions or as `node index.js` on a laptop — so this service always
+needs `ADMIN_PASSWORD` and an `API_BASE` that reaches the deployed site.
 
 ---
 
@@ -48,8 +52,8 @@ repo-root `.env.local`, which this service also reads. A value set in
 | --- | --- | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | yes | — | Token from [@BotFather](https://t.me/BotFather). Never commit it. |
 | `TELEGRAM_ADMIN_IDS` | yes | *(empty)* | Comma-separated chat ids allowed to run admin commands. Everyone else gets `אין הרשאה`. |
-| `ADMIN_PASSWORD` | yes | *(empty)* | Sent to the site as the `X-Admin-Password` header. |
-| `API_BASE` | no | `https://wedding-invite-sand-kappa.vercel.app` | Base URL of the site API. |
+| `ADMIN_PASSWORD` | yes | *(empty)* | Sent to the site as the `X-Admin-Password` header. Without it the bot cannot read or save subscribers or flows. |
+| `API_BASE` | no | `SITE_URL`, else `https://wedding-invite-sand-kappa.vercel.app` | Base URL of the site API — which is also where subscribers and flow state are stored. |
 | `NOTIFY_SECRET` | yes for broadcasts | *(empty)* | Shared secret for `POST /notify/rsvp`. Unset ⇒ the endpoint refuses every request with 503. |
 | `PORT` | no | `8787` | Port for the notify HTTP server. |
 | `API_TIMEOUT_MS` | no | `15000` | Timeout on calls to the site API. |
@@ -122,8 +126,8 @@ Those are still being migrated, so:
 The workbook is written to the OS temp directory (a private
 `wedding-export-*` folder) and deleted as soon as the last send finishes —
 nothing is ever written into the repo. Subscribers who blocked or deleted the
-bot are dropped from `subscribers.json`, exactly as in the RSVP broadcast, and
-the fan-out continues.
+bot are removed from the subscriber table, exactly as in the RSVP broadcast,
+and the fan-out continues.
 
 > **The schedule only runs while the service is running.** It is an in-process
 > `node-cron` timer inside a long-lived Node process, not a serverless cron: if
@@ -146,10 +150,11 @@ Content-Type: application/json
 Responses: `200 {"ok":true,...}` on success, `401` on a bad or missing secret,
 `503` when `NOTIFY_SECRET` is not configured, `400` without a `name`.
 The broadcast happens after the response is sent, so the caller never waits on
-Telegram. Subscribers who blocked or deleted the bot are dropped from
-`subscribers.json` automatically.
+Telegram. Subscribers who blocked or deleted the bot are removed from the
+subscriber table automatically.
 
-`GET /health` returns `{status, subscribers, api_base}`.
+`GET /health` returns `{status, subscribers, api_base, store}` (`store` is
+always `api`).
 
 ### Wiring the site to it
 
@@ -182,12 +187,10 @@ this — pick one of:
 - **Fly.io free allowance.** `fly launch` in this directory, then
   `fly secrets set TELEGRAM_BOT_TOKEN=… ADMIN_PASSWORD=… NOTIFY_SECRET=…`.
   Keep one machine always on (`min_machines_running = 1`) — a suspended machine
-  stops polling. Mount a small volume at `/app` if you want `subscribers.json`
-  to survive a redeploy.
+  stops polling. No volume is needed: nothing is stored on the machine.
 - **Railway / Render.** Deploy as a *worker*/*background* service (not a web
   service) with the start command `node index.js`, and set the same variables.
-  Both wipe the filesystem on redeploy, so attach a volume for
-  `subscribers.json` if the subscriber list matters.
+  A redeploy loses nothing — the subscriber list is in the site's database.
 
 Only ever run **one** instance: Telegram allows a single long-polling consumer
 per token, and a second one makes both drop updates.
@@ -208,7 +211,8 @@ up at export time, otherwise that day's workbook is never built.
   stuck at 0.18.5 and carries open advisories) and scheduled with `node-cron`
   (pinned to 4.6.0).
 - The workbook lives in the OS temp directory for a few seconds only. Nothing
-  under `telegram-service/` is written at export time except `subscribers.json`
-  when a dead chat is pruned.
-- `subscribers.json` holds real chat ids and is gitignored. It is written via a
-  temp file + rename, so an interrupted write cannot corrupt it.
+  under `telegram-service/` is ever written.
+- Subscribers (real chat ids) and flow state are in the database only. An old
+  `subscribers.json` from the retired file store is ignored — re-send `/start`
+  to subscribe through the database. `BOT_STORE` and
+  `TELEGRAM_SUBSCRIBERS_FILE` no longer do anything.

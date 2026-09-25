@@ -67,7 +67,6 @@ before(async () => {
 
   process.env.API_BASE = base;
   process.env.ADMIN_PASSWORD = 'pw';
-  process.env.BOT_STORE = 'api';
   process.env.API_TIMEOUT_MS = '2000';
 
   fmt = require('../format');

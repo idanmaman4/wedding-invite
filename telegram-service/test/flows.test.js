@@ -10,20 +10,21 @@ const test = require('node:test');
 const { before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+const { createBotDb, isBotRoute } = require('./helpers/bot-db');
 
 let bot;
 let store;
 let ui;
 let apiServer;
 let apiBase;
-let dir;
 
 let sent = [];
 let routes = {};
 let apiCalls = [];
+/** The bot's own tables (subscribers, flow state), answered when no route is set. */
+const botDb = createBotDb();
+/** Calls to the guest list itself, leaving out the bot's own bookkeeping. */
+const siteCalls = () => apiCalls.filter((c) => !isBotRoute(c));
 let updateId = 0;
 const CHAT = 777;
 
@@ -92,8 +93,9 @@ before(async () => {
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
       const key = `${req.method} ${req.url}`;
-      apiCalls.push({ key, body: raw ? JSON.parse(raw) : null });
-      const route = routes[key];
+      const body = raw ? JSON.parse(raw) : null;
+      apiCalls.push({ key, body });
+      const route = routes[key] || botDb.handle(req.method, req.url, body);
       if (!route) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end('{"error":"missing"}');
@@ -105,15 +107,12 @@ before(async () => {
   await new Promise((r) => apiServer.listen(0, '127.0.0.1', r));
   apiBase = `http://127.0.0.1:${apiServer.address().port}`;
 
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wedding-flow-'));
-  process.env.TELEGRAM_SUBSCRIBERS_FILE = path.join(dir, 'subscribers.json');
   process.env.TELEGRAM_BOT_TOKEN = '123456:test-token-not-real';
   process.env.API_BASE = apiBase;
   process.env.ADMIN_PASSWORD = 'pw';
   process.env.NOTIFY_SECRET = 'notify-secret';
   process.env.TELEGRAM_ADMIN_IDS = '';
 
-  process.env.BOT_STORE = 'file';
   const { createBot } = require('../bot');
   ({ bot } = createBot({ token: process.env.TELEGRAM_BOT_TOKEN, log: { log() {}, error() {} } }));
   store = require('../store');
@@ -133,17 +132,15 @@ before(async () => {
 
 after(async () => {
   await new Promise((r) => apiServer.close(r));
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
   sent = [];
   routes = {};
-  apiCalls = [];
-  fs.rmSync(process.env.TELEGRAM_SUBSCRIBERS_FILE, { force: true });
-  await ui.endFlow(CHAT);
+  botDb.reset();
   await bot.handleUpdate(command('/start'));  // subscribe → admin rights
   sent = [];
+  apiCalls = [];
 });
 
 // ─── The menu ────────────────────────────────────────────────────────────────
@@ -214,7 +211,7 @@ test('/invite with no arguments asks for the name first', async () => {
   assert.ok(text.includes('שלב 1'), 'the first step should say so');
   assert.ok(text.includes('שם'));
   assert.ok(buttonData().includes('flow:cancel'), 'a way out at every step');
-  assert.equal(apiCalls.length, 0, 'nothing should be created yet');
+  assert.deepEqual(siteCalls(), [], 'nothing should be created yet');
 });
 
 test('the three steps run in order and create the invitation at the end', async () => {
@@ -227,7 +224,7 @@ test('the three steps run in order and create the invitation at the end', async 
   await bot.handleUpdate(plain('דנה כהן'));
   assert.ok(allText().includes('שלב 2'), 'the phone step should follow the name');
   assert.ok(allText().includes('דנה כהן'), 'the name is echoed back');
-  assert.equal(apiCalls.length, 0);
+  assert.deepEqual(siteCalls(), []);
   sent = [];
 
   // Step 2 → the phone.
@@ -237,7 +234,7 @@ test('the three steps run in order and create the invitation at the end', async 
     buttonData().filter((d) => d.startsWith('invite:side:')).sort(),
     Object.keys(sides).map((k) => `invite:side:${k}`).sort(),
   );
-  assert.equal(apiCalls.length, 0);
+  assert.deepEqual(siteCalls(), []);
   sent = [];
 
   // Step 3 → the side, tapped.
@@ -373,7 +370,7 @@ test('/search with no term waits for the next message', async () => {
 
   await bot.handleUpdate(command('/search'));
   assert.ok(buttonData().includes('flow:cancel'));
-  assert.equal(apiCalls.length, 0, 'nothing should be searched yet');
+  assert.deepEqual(siteCalls(), [], 'nothing should be searched yet');
   sent = [];
 
   await bot.handleUpdate(plain('דוד'));

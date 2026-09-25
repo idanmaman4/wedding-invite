@@ -118,7 +118,7 @@ function createDailyExportJob({
   }
 
   return async function runDailyExport() {
-    // Either backend: a plain array from the file, or a promise from the API.
+    // A plain array or a promise of one (the registry is behind the admin API).
     const subscribers = (await listSubscribers()) || [];
     const at = now();
 
