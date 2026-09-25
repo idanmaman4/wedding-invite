@@ -3,6 +3,7 @@ import { gsap } from 'gsap';
 import { submitRSVP, submitting, submitted, submitError, readInviteToken, fetchInvite } from '../store/rsvp';
 import { revealOnScroll } from '../animations/gsapSetup';
 import ProcessionStage from './ProcessionStage';
+import CalendarButtons from './CalendarButtons';
 import { scrollToRSVP } from '../scrollToRSVP';
 
 // Step indices
@@ -32,7 +33,17 @@ export default function RSVPForm() {
   // Personal-invite state. `inviteToken` is only set once the token actually
   // resolved, so a stale or bogus link falls back to the ordinary flow.
   const [inviteToken, setInviteToken] = createSignal('');
+  // A personal link answers once: when it already has an answer, the card
+  // shows the invitation and that answer instead of the form.
   const [alreadyAnswered, setAlreadyAnswered] = createSignal(false);
+  const [answeredAttending, setAnsweredAttending] = createSignal(false);
+  const [answeredGuests, setAnsweredGuests] = createSignal(1);
+
+  const showAnswered = (invite) => {
+    setAnsweredAttending(invite.attending === true);
+    setAnsweredGuests(Number(invite.guests) || 1);
+    setAlreadyAnswered(true);
+  };
 
   let sectionRef;
   let containerRef;
@@ -53,13 +64,7 @@ export default function RSVPForm() {
       setInviteToken(token);
       if (invite.name) setName(invite.name);
       if (invite.phone) setPhone(invite.phone);
-      if (invite.responded) {
-        setAlreadyAnswered(true);
-        setAttending(invite.attending === true);
-        const n = Number(invite.guests) || 1;
-        setGuests(n);
-        setGuestsOther(n > 5);
-      }
+      if (invite.responded) showAnswered(invite);
     });
   });
 
@@ -132,6 +137,13 @@ export default function RSVPForm() {
       });
       window.location.assign(`/confirmed?${params.toString()}`);
     } catch (e) {
+      if (e?.status === 409 && inviteToken()) {
+        // Answered meanwhile (another tab, a second tap): show what is stored.
+        const invite = await fetchInvite(inviteToken());
+        showAnswered(invite && invite.responded ? invite : { attending: attending() === true, guests: guests() });
+        goTo(STEP_WELCOME);
+        return;
+      }
       setErrorMsg(e?.message || 'משהו השתבש, נסו שוב');
       goTo(STEP_DONE);
     }
@@ -319,7 +331,7 @@ export default function RSVPForm() {
                   <div style="height: 1px; width: 56px; background: linear-gradient(to right, transparent, rgba(201,169,110,0.5));" />
                 </div>
                 <h2 style={headingStyle}>
-                  {alreadyAnswered() ? 'כבר אישרתם — אפשר לעדכן' : 'תבואו לחגוג איתנו?'}
+                  {alreadyAnswered() ? 'תודה, קיבלנו את תשובתכם' : 'תבואו לחגוג איתנו?'}
                 </h2>
                 <p style={subheadStyle}>
                   <Show when={inviteToken() && name()}>
@@ -328,15 +340,33 @@ export default function RSVPForm() {
                   עידן וורד מזמינים אתכם בשמחה לחגוג את חתונתם ביום ראשון, 25 באוקטובר 2026, באולם האירועים תרין, ראשון לציון. קבלת פנים ב-18:30, חופה ב-19:30.
                 </p>
                 <div style="height: 1px; background: linear-gradient(to right, transparent, rgba(178,34,34,0.25), transparent); margin: 24px 0;" />
-                <button
-                  style={bigBtnBase}
-                  /* A personal link already knows the name — start at the answer. */
-                  onClick={() => goTo(inviteToken() ? STEP_ATTENDANCE : STEP_NAME)}
-                  onMouseEnter={(e) => { e.target.style.background = '#B22222'; e.target.style.color = 'white'; }}
-                  onMouseLeave={(e) => { e.target.style.background = 'white'; e.target.style.color = '#B22222'; }}
+                <Show
+                  when={alreadyAnswered()}
+                  fallback={
+                    <button
+                      style={bigBtnBase}
+                      /* A personal link already knows the name — start at the answer. */
+                      onClick={() => goTo(inviteToken() ? STEP_ATTENDANCE : STEP_NAME)}
+                      onMouseEnter={(e) => { e.target.style.background = '#B22222'; e.target.style.color = 'white'; }}
+                      onMouseLeave={(e) => { e.target.style.background = 'white'; e.target.style.color = '#B22222'; }}
+                    >
+                      אישור הגעה
+                    </button>
+                  }
                 >
-                  {alreadyAnswered() ? 'עדכון התשובה' : 'אישור הגעה'}
-                </button>
+                  {/* Answered: the invitation and the answer, no form. */}
+                  <p class="answered-summary" style="font-family: 'Frank Ruhl Libre', serif; font-size: 1.35rem; color: #B22222; margin-bottom: 6px;">
+                    {answeredAttending()
+                      ? (answeredGuests() === 1 ? 'אישרתם הגעה — נתראה בחתונה!' : `אישרתם הגעה של ${answeredGuests()} אורחים — נתראה בחתונה!`)
+                      : 'עדכנתם שלא תוכלו להגיע — נתגעגע.'}
+                  </p>
+                  <p style={subheadStyle + 'margin-bottom: 20px;'}>
+                    צריך לשנות משהו? דברו איתנו ישירות.
+                  </p>
+                  <Show when={answeredAttending()}>
+                    <CalendarButtons />
+                  </Show>
+                </Show>
               </div>
             </div>
           </Show>
@@ -566,7 +596,7 @@ export default function RSVPForm() {
                   onMouseEnter={(e) => { if (!submitting()) { e.target.style.background = '#B22222'; e.target.style.color = 'white'; }}}
                   onMouseLeave={(e) => { e.target.style.background = 'white'; e.target.style.color = '#B22222'; }}
                 >
-                  {submitting() ? 'שולחים…' : alreadyAnswered() ? 'עדכון התשובה' : 'שליחה'}
+                  {submitting() ? 'שולחים…' : 'שליחה'}
                 </button>
               </div>
             </div>

@@ -277,37 +277,40 @@ def test_rsvp_via_invite_links_the_guest(client):
     assert row["guests"] == 2
 
 
-def test_resubmitting_a_personal_link_updates_instead_of_duplicating(client):
+def test_a_personal_link_answers_only_once(client):
     inv = make_invite(client)
     first = client.post("/api/rsvp", json={
         "name": "דנה כהן", "attending": True, "guests": 2, "invite_token": inv["token"],
-    }).json()
-    assert first["updated"] is False
+    })
+    assert first.status_code == 200 and first.json()["updated"] is False
 
+    # Re-opened link, another tab, a second tap: refused, and nothing changes.
     second = client.post("/api/rsvp", json={
-        "name": "דנה לוי", "attending": True, "guests": 5,
-        "phone": "0521112222", "dietary": "טבעוני", "invite_token": inv["token"],
-    }).json()
-    assert second["updated"] is True
-    assert second["id"] == first["id"]          # same row, edited in place
+        "name": "דנה לוי", "attending": False, "guests": 5, "invite_token": inv["token"],
+    })
+    assert second.status_code == 409
+    assert "כבר השבתם" in second.json()["detail"]
 
     rows = client.get("/api/guests", headers=ADMIN).json()
-    assert len(rows) == 1                        # no double-counting
-    assert rows[0]["name"] == "דנה לוי"
-    assert rows[0]["guests"] == 5
-    assert rows[0]["phone"] == "0521112222"
-    assert rows[0]["dietary"] == "טבעוני"
-
+    assert len(rows) == 1
+    assert rows[0]["name"] == "דנה כהן" and rows[0]["guests"] == 2 and rows[0]["attending"] is True
     stats = client.get("/api/stats", headers=ADMIN).json()
-    assert stats["responses"] == 1 and stats["total_people"] == 5
+    assert stats["responses"] == 1 and stats["total_people"] == 2
+
+    # The public prefill tells the page to show the answer instead of the form.
+    view = client.get(f"/api/invite/{inv['token']}").json()
+    assert view["responded"] is True and view["attending"] is True and view["guests"] == 2
 
 
-def test_changing_the_answer_to_declining(client):
+def test_deleting_an_answer_in_the_admin_panel_reopens_the_link(client):
     inv = make_invite(client)
-    client.post("/api/rsvp", json={
-        "name": "דנה", "attending": True, "guests": 4, "invite_token": inv["token"]})
-    client.post("/api/rsvp", json={
+    gid = client.post("/api/rsvp", json={
+        "name": "דנה", "attending": True, "guests": 4, "invite_token": inv["token"]}).json()["id"]
+    assert client.delete(f"/api/guests/{gid}", headers=ADMIN).status_code == 200
+
+    again = client.post("/api/rsvp", json={
         "name": "דנה", "attending": False, "guests": 1, "invite_token": inv["token"]})
+    assert again.status_code == 200
 
     stats = client.get("/api/stats", headers=ADMIN).json()
     assert stats["responses"] == 1

@@ -66,7 +66,11 @@ export async function submitRSVP(formData) {
       // FastAPI validation errors (422) carry `detail` as a list of objects,
       // which would show as "[object Object]"; guests get a plain sentence.
       const detail = typeof err.detail === 'string' ? err.detail : 'חלק מהפרטים לא תקינים, בדקו ונסו שוב.';
-      throw new Error(response.status >= 500 ? 'השליחה נכשלה, נסו שוב בעוד רגע.' : detail);
+      const error = new Error(response.status >= 500 ? 'השליחה נכשלה, נסו שוב בעוד רגע.' : detail);
+      // 409: this personal link was already answered (another tab, a second
+      // tap). The form shows the invitation and the answer instead of an error.
+      error.status = response.status;
+      throw error;
     }
 
     const result = await response.json();

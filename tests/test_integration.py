@@ -127,29 +127,27 @@ def test_a_guest_goes_from_invitation_to_a_counted_seat(client):
     assert again["guests"] == 4
 
 
-def test_a_guest_changing_their_mind_never_double_counts(client):
-    """Three submissions through one link leave one guest and one total."""
+def test_a_guest_can_answer_their_link_only_once(client):
+    """Repeat submissions through one link are refused: one guest, one total."""
     token = make_invite(client, name="יוסי", side="idan")["token"]
 
-    for guests in (2, 5, 3):
-        res = client.post(
+    codes = [
+        client.post(
             "/api/rsvp",
             json={"name": "יוסי", "attending": True, "guests": guests, "invite_token": token},
-        )
-        assert res.status_code == 200
+        ).status_code
+        for guests in (2, 5, 3)
+    ]
+    assert codes == [200, 409, 409]
+    # Nor can they cancel through the link afterwards — the couple does that.
+    assert client.post(
+        "/api/rsvp", json={"name": "יוסי", "attending": False, "invite_token": token}
+    ).status_code == 409
 
     assert len(client.get("/api/guests", headers=ADMIN).json()) == 1
     stats = client.get("/api/stats", headers=ADMIN).json()
     assert stats["responses"] == 1
-    assert stats["total_people"] == 3, "only the latest answer counts"
-
-    # And then they cancel entirely.
-    client.post("/api/rsvp", json={"name": "יוסי", "attending": False, "invite_token": token})
-    stats = client.get("/api/stats", headers=ADMIN).json()
-    assert stats["responses"] == 1
-    assert stats["attending_responses"] == 0
-    assert stats["declined"] == 1
-    assert stats["total_people"] == 0
+    assert stats["total_people"] == 2, "only the first answer counts"
 
 
 def test_a_full_guest_list_adds_up_across_all_four_sides(client):

@@ -165,38 +165,27 @@ def submit_rsvp(data: RSVPRequest):
                 select(Invite).where(Invite.token == data.invite_token).with_for_update()
             )
 
-        # A personal link is editable: re-submitting it updates the row it
-        # already created instead of adding a second one (which would
-        # double-count the party).
-        existing = None
-        if invite is not None and invite.guest_id:
-            existing = session.get(Guest, invite.guest_id)
+        # A personal link answers once. Re-opening it shows the invitation and
+        # the answer already given (see RSVPForm); a second submit — another
+        # tab, a double tap that lost the row-lock race — is refused, never
+        # applied. Deleting the answer in the admin panel re-opens the link.
+        if invite is not None and invite.guest_id and session.get(Guest, invite.guest_id) is not None:
+            raise HTTPException(status_code=409, detail="כבר השבתם להזמנה הזו — תודה!")
 
-        if existing is not None:
-            existing.name = data.name
-            existing.attending = data.attending
-            existing.guests = data.guests
-            existing.plus_one = data.guests > 1
-            existing.dietary = data.dietary or ""
-            existing.message = data.message or ""
-            existing.phone = data.phone or ""
-            guest = existing
-            updated = True
-        else:
-            guest = Guest(
-                name=data.name,
-                attending=data.attending,
-                guests=data.guests,
-                plus_one=data.guests > 1,  # legacy flag, derived from party size
-                dietary=data.dietary or "",
-                message=data.message or "",
-                phone=data.phone or "",
-            )
-            session.add(guest)
-            session.flush()  # assigns guest.id
-            updated = False
-            if invite is not None:
-                invite.guest_id = guest.id
+        guest = Guest(
+            name=data.name,
+            attending=data.attending,
+            guests=data.guests,
+            plus_one=data.guests > 1,  # legacy flag, derived from party size
+            dietary=data.dietary or "",
+            message=data.message or "",
+            phone=data.phone or "",
+        )
+        session.add(guest)
+        session.flush()  # assigns guest.id
+        updated = False
+        if invite is not None:
+            invite.guest_id = guest.id
 
         session.flush()
         result = {

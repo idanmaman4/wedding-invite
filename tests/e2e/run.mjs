@@ -472,32 +472,48 @@ async function main() {
     assertEqual(inv.guests, 4, 'party size on the invite');
   });
 
-  await test('re-opening a personal link edits the answer instead of duplicating it', async () => {
-    const token = await createInvite('משנה דעת', '0507776665', 'idan');
+  await test('a personal link answers once; re-opening it shows the invitation and the answer, not the form', async () => {
+    const token = await createInvite('עונה פעם אחת', '0507776665', 'idan');
 
-    for (const count of ['2', '5']) {
-      await withPage(async (page) => {
-        const startBtn = cardButton(page, /אישור הגעה|עדכון התשובה/);
-        await startBtn.waitFor({ state: 'visible', timeout: 30000 });
-        await startBtn.click();
-        const yes = cardButton(page, /כן, נגיע/);
-        await yes.waitFor({ state: 'visible' });
-        await yes.click();
-        const pill = cardButton(page, new RegExp(`^${count}$`));
-        await pill.waitFor({ state: 'visible' });
-        await pill.click();
-        await cardButton(page, /המשך/).click();
-        await cardButton(page, /המשך|דילוג/).click();
-        await cardButton(page, /המשך|דילוג/).click();
-        await cardButton(page, /^שליחה$|עדכון התשובה/).click();
-        await page.waitForURL(/\/confirmed/, { timeout: 20000 });
-      }, { url: `${siteBase}/?i=${token}` });
-    }
+    await withPage(async (page) => {
+      const startBtn = cardButton(page, /אישור הגעה/);
+      await startBtn.waitFor({ state: 'visible', timeout: 30000 });
+      await startBtn.click();
+      const yes = cardButton(page, /כן, נגיע/);
+      await yes.waitFor({ state: 'visible' });
+      await yes.click();
+      const pill = cardButton(page, /^2$/);
+      await pill.waitFor({ state: 'visible' });
+      await pill.click();
+      await cardButton(page, /המשך/).click();
+      await cardButton(page, /המשך|דילוג/).click();
+      await cardButton(page, /המשך|דילוג/).click();
+      await cardButton(page, /^שליחה$/).click();
+      await page.waitForURL(/\/confirmed/, { timeout: 20000 });
+    }, { url: `${siteBase}/?i=${token}` });
+
+    await withPage(async (page) => {
+      await page.getByText('תודה, קיבלנו את תשובתכם').first().waitFor({ state: 'visible', timeout: 30000 });
+      const body = await page.textContent('body');
+      assert(body.includes('אישרתם הגעה של 2 אורחים'), 'the stored answer is not shown');
+      assert(body.includes('25 באוקטובר 2026'), 'the invitation details are not shown');
+      assertEqual(await cardButton(page, /אישור הגעה|שליחה/).count(), 0, 'the form is still offered');
+      const ics = page.locator('a[href$=".ics"]').first();
+      assert(await ics.isVisible(), 'an attending guest should get the calendar button');
+    }, { url: `${siteBase}/?i=${token}` });
+
+    // A second answer straight at the API (another tab) is refused too.
+    const again = await apiJson('/api/rsvp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'עונה פעם אחת', attending: true, guests: 5, invite_token: token }),
+    });
+    assertEqual(again.status, 409, 'a second answer should be refused');
 
     const guests = await apiJson('/api/guests', { headers: admin });
-    const matching = guests.body.filter((g) => g.name === 'משנה דעת');
+    const matching = guests.body.filter((g) => g.name === 'עונה פעם אחת');
     assertEqual(matching.length, 1, 'the guest was duplicated');
-    assertEqual(matching[0].guests, 5, 'the second answer should have replaced the first');
+    assertEqual(matching[0].guests, 2, 'the first answer must stand');
   });
 
   console.log('\nthe admin panel');

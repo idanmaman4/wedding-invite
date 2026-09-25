@@ -7,6 +7,7 @@ and notify fixes.
 """
 
 import os
+import time
 
 import pytest
 from sqlalchemy.orm import Session
@@ -189,16 +190,16 @@ def test_a_racing_first_flow_write_is_not_a_500(client, monkeypatch):
 
 # ── Notify ───────────────────────────────────────────────────────────────────
 
-def test_the_bot_is_told_when_an_rsvp_is_an_edit(client, side_service, monkeypatch):  # noqa: F811
+def test_a_refused_second_answer_is_not_announced(client, side_service, monkeypatch):  # noqa: F811
     monkeypatch.setenv("NOTIFY_URL", f"{side_service.url}/notify/rsvp")
     monkeypatch.setenv("NOTIFY_SECRET", "s")
     token = make_invite(client)["token"]
     body = {"name": "דנה", "attending": True, "guests": 2, "invite_token": token}
 
-    client.post("/api/rsvp", json=body)
+    assert client.post("/api/rsvp", json=body).status_code == 200
     assert wait_for(lambda: len(side_service.received) == 1)
-    client.post("/api/rsvp", json={**body, "guests": 3})
-    assert wait_for(lambda: len(side_service.received) == 2)
+    assert client.post("/api/rsvp", json={**body, "guests": 3}).status_code == 409
+    time.sleep(0.3)  # a (wrong) second broadcast would have landed by now
 
+    assert len(side_service.received) == 1
     assert side_service.received[0]["body"]["updated"] is False
-    assert side_service.received[1]["body"]["updated"] is True
