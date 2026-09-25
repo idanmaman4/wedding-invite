@@ -27,6 +27,8 @@ let sent = [];
 /** Admin-API routes for the test at hand, keyed by "METHOD /path". */
 let routes = {};
 let apiCalls = [];
+/** The last JSON body each "METHOD /path" received. */
+let apiBodies = {};
 /** The bot's own tables (subscribers, flow state), answered when no route is set. */
 const botDb = createBotDb();
 
@@ -123,6 +125,7 @@ before(async () => {
       const raw = Buffer.concat(chunks).toString('utf8');
       const key = `${req.method} ${req.url}`;
       apiCalls.push(key);
+      if (raw) apiBodies[key] = JSON.parse(raw);
       const route = routes[key] || botDb.handle(req.method, req.url, raw ? JSON.parse(raw) : null);
       if (!route) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -168,6 +171,7 @@ beforeEach(() => {
   sent = [];
   routes = {};
   apiCalls = [];
+  apiBodies = {};
   botDb.reset();
 });
 
@@ -386,6 +390,84 @@ test('sharing a contact creates their invitation: pick a side, get the link and 
   const wa = lastKeyboard().flat().find((b) => b.url);
   assert.ok(wa && wa.url.startsWith('https://wa.me/972501112233?text='), 'one tap opens WhatsApp on their chat');
   assert.ok(decodeURIComponent(wa.url).includes('ct-1'), 'with the link already in the message');
+});
+
+test('/side sets a default side, and a shared contact then becomes an invite without asking', async () => {
+  await bot.handleUpdate(textUpdate('/start'));
+  sent = [];
+  await bot.handleUpdate(textUpdate('/side'));
+  assert.ok(buttonData().includes('defside:idan'), 'every side is offered');
+  assert.ok(buttonData().includes('defside:none'), 'and going back to asking');
+  await bot.handleUpdate(callbackUpdate('defside:idan'));
+  assert.equal(await store.getDefaultSide(CHAT), 'idan');
+
+  sent = [];
+  routes['POST /api/invites'] = {
+    body: { token: 'd-1', name: 'רותם לוי', phone: '+972501112233', side: 'idan', url: `${apiBase}/?i=d-1` },
+  };
+  await bot.handleUpdate(contactUpdate('+972501112233', 'רותם לוי'));
+  assert.ok(apiCalls.includes('POST /api/invites'), 'created straight away');
+  assert.equal(apiBodies['POST /api/invites'].side, 'idan', 'in the default side');
+  assert.equal(apiBodies['POST /api/invites'].name, 'רותם לוי');
+  assert.ok(!buttonData().some((d) => d.startsWith('invite:side:')), 'the side was not asked');
+  assert.ok(allText().includes('d-1'), 'the link comes back');
+  assert.ok(buttonData().includes('invite:rename:d-1'), 'with a way to give it another name');
+});
+
+test('a contact invite can get another name after it was made, keeping its link', async () => {
+  await bot.handleUpdate(textUpdate('/start'));
+  await bot.handleUpdate(textUpdate('/side ורד'));
+  assert.equal(await store.getDefaultSide(CHAT), 'vered', 'the Hebrew label works as an argument');
+  routes['POST /api/invites'] = { body: { token: 'r-1', name: 'Mom', phone: '0501112233', side: 'vered', url: `${apiBase}/?i=r-1` } };
+  routes['PATCH /api/invites/r-1'] = {
+    body: { token: 'r-1', name: 'דודה שרה ודוד משה', phone: '0501112233', side: 'vered', url: `${apiBase}/?i=r-1` },
+  };
+  await bot.handleUpdate(contactUpdate('0501112233', 'Mom'));
+
+  sent = [];
+  await bot.handleUpdate(callbackUpdate('invite:rename:r-1'));
+  assert.ok(allText().includes('איזה שם'), 'asks for the name');
+  await bot.handleUpdate(plainUpdate('דודה שרה ודוד משה'));
+  assert.deepEqual(apiBodies['PATCH /api/invites/r-1'], { name: 'דודה שרה ודוד משה' });
+  const text = allText();
+  assert.ok(text.includes('השם עודכן'));
+  assert.ok(text.includes('שלום דודה שרה ודוד משה'), 'the invitation text is rewritten with the new name');
+  assert.ok(text.includes('?i=r-1'), 'same link');
+  const wa = lastKeyboard().flat().find((b) => b.url);
+  assert.ok(decodeURIComponent(wa.url).includes('דודה שרה ודוד משה'), 'the WhatsApp message uses the new name');
+});
+
+test('without a default side, a contact can be renamed before its side is chosen', async () => {
+  await bot.handleUpdate(textUpdate('/start'));
+  routes['POST /api/invites'] = { body: { token: 'n-1', name: 'משפחת כהן', phone: '0501112233', side: 'idan_parents', url: `${apiBase}/?i=n-1` } };
+  await bot.handleUpdate(contactUpdate('0501112233', 'יוסי'));
+  assert.ok(buttonData().includes('invite:rename'), 'another name is offered next to the sides');
+
+  await bot.handleUpdate(callbackUpdate('invite:rename'));
+  sent = [];
+  await bot.handleUpdate(plainUpdate('משפחת כהן'));
+  assert.ok(allText().includes('משפחת כהן'), 'the new name is shown');
+  assert.ok(buttonData().includes('invite:side:idan_parents'), 'then the side is asked');
+  assert.ok(!apiCalls.includes('POST /api/invites'), 'nothing is created before the side');
+
+  await bot.handleUpdate(callbackUpdate('invite:side:idan_parents'));
+  assert.equal(apiBodies['POST /api/invites'].name, 'משפחת כהן');
+  assert.equal(apiBodies['POST /api/invites'].phone, '0501112233', 'the contact number is kept');
+});
+
+test('/side none goes back to asking, and a default also skips the /invite side step', async () => {
+  await bot.handleUpdate(textUpdate('/start'));
+  await bot.handleUpdate(textUpdate('/side הורי עידן'));
+  routes['POST /api/invites'] = { body: { token: 's-1', name: 'דנה', phone: '0501234567', side: 'idan_parents', url: `${apiBase}/?i=s-1` } };
+  await bot.handleUpdate(textUpdate('/invite דנה'));
+  await bot.handleUpdate(plainUpdate('0501234567'));
+  assert.equal(apiBodies['POST /api/invites'].side, 'idan_parents', 'typed invites use the default too');
+
+  await bot.handleUpdate(textUpdate('/side none'));
+  assert.equal(await store.getDefaultSide(CHAT), '');
+  sent = [];
+  await bot.handleUpdate(contactUpdate('0509999999', 'אורח'));
+  assert.ok(buttonData().includes('invite:side:idan'), 'the side is asked again');
 });
 
 test('/invite accepts a Hebrew side label as well as the key', async () => {

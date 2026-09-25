@@ -368,6 +368,43 @@ def delete_invite(token: str, x_admin_password: Optional[str] = Header(None)):
         return {"success": True}
 
 
+class InviteUpdate(BaseModel):
+    name: Optional[str] = None
+    side: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError("Name must not be empty.")
+        return v[:NAME_MAX]
+
+    @field_validator("side")
+    @classmethod
+    def side_known(cls, v: Optional[str]) -> Optional[str]:
+        return v if v is None else normalize_side(v)
+
+
+@app.patch("/api/invites/{token}")
+def update_invite(token: str, data: InviteUpdate, x_admin_password: Optional[str] = Header(None)):
+    """Rename an invite or move it to another side. The token (and so the
+    personal link already sent) stays the same."""
+    check_admin(x_admin_password)
+    with get_session() as session:
+        inv = session.scalar(select(Invite).where(Invite.token == token))
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Invite not found")
+        if data.name is not None:
+            inv.name = data.name
+        if data.side is not None:
+            inv.side = data.side
+        session.flush()
+        return _invite_dict(session, inv)
+
+
 @app.post("/api/invites/{token}/sent")
 def mark_invite_sent(token: str, x_admin_password: Optional[str] = Header(None)):
     check_admin(x_admin_password)
@@ -545,6 +582,7 @@ def subscriber_dict(s: Subscriber) -> dict:
         "chat_id": s.chat_id,
         "first_name": s.first_name,
         "username": s.username,
+        "default_side": s.default_side or "",
         "subscribed_at": iso(s.subscribed_at),
     }
 
@@ -583,6 +621,29 @@ def add_subscriber(data: SubscriberIn, x_admin_password: Optional[str] = Header(
             existing.username = data.username
         session.flush()
         return {"created": False, "subscriber": subscriber_dict(existing)}
+
+
+class DefaultSideIn(BaseModel):
+    side: str = ""
+
+    @field_validator("side")
+    @classmethod
+    def side_known_or_blank(cls, v: str) -> str:
+        # Blank clears the default: the bot goes back to asking every time.
+        return normalize_side(v) if (v or "").strip() else ""
+
+
+@app.put("/api/bot/subscribers/{chat_id}/side")
+def set_default_side(chat_id: str, data: DefaultSideIn, x_admin_password: Optional[str] = Header(None)):
+    """The side this chat's new invites go to without the bot asking."""
+    check_admin(x_admin_password)
+    with get_session() as session:
+        sub = session.get(Subscriber, chat_id)
+        if sub is None:
+            raise HTTPException(status_code=404, detail="Not subscribed")
+        sub.default_side = data.side
+        session.flush()
+        return {"subscriber": subscriber_dict(sub)}
 
 
 @app.delete("/api/bot/subscribers/{chat_id}")

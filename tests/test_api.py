@@ -392,3 +392,55 @@ def test_stats_totals_and_per_side_breakdown(client):
     # And every response is accounted for exactly once across all the buckets.
     assert sum(v["responded"] for v in s["by_side"].values()) == s["responses"]
     assert sum(v["total_people"] for v in s["by_side"].values()) == s["total_people"]
+
+
+# ── Bot defaults & invite edits ──────────────────────────────────────────────
+
+def test_a_chat_can_set_and_clear_its_default_side(client):
+    client.post("/api/bot/subscribers", headers=ADMIN, json={"chat_id": "77", "first_name": "עידן"})
+    res = client.put("/api/bot/subscribers/77/side", headers=ADMIN, json={"side": "עידן"})
+    assert res.status_code == 200, res.text
+    assert res.json()["subscriber"]["default_side"] == "idan"
+    listed = client.get("/api/bot/subscribers", headers=ADMIN).json()
+    assert listed[0]["default_side"] == "idan"
+    # Blank goes back to asking every time; an unknown side is refused.
+    assert client.put("/api/bot/subscribers/77/side", headers=ADMIN, json={"side": ""}).json()["subscriber"]["default_side"] == ""
+    assert client.put("/api/bot/subscribers/77/side", headers=ADMIN, json={"side": "שכנים"}).status_code == 422
+
+
+def test_default_side_needs_a_subscriber_and_the_password(client):
+    assert client.put("/api/bot/subscribers/nobody/side", headers=ADMIN, json={"side": "idan"}).status_code == 404
+    assert client.put("/api/bot/subscribers/nobody/side", json={"side": "idan"}).status_code == 401
+
+
+def test_an_invite_can_be_renamed_and_keeps_its_link(client):
+    inv = make_invite(client, name="איש קשר", side="idan")
+    res = client.patch(f"/api/invites/{inv['token']}", headers=ADMIN, json={"name": "  דוד ושרה  "})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["name"] == "דוד ושרה"
+    assert body["token"] == inv["token"] and body["url"] == inv["url"]
+    assert body["side"] == "idan"
+    assert client.get(f"/api/invite/{inv['token']}").json()["name"] == "דוד ושרה"
+    moved = client.patch(f"/api/invites/{inv['token']}", headers=ADMIN, json={"side": "הורי ורד"}).json()
+    assert moved["side"] == "vered_parents" and moved["name"] == "דוד ושרה"
+
+
+def test_renaming_validates_and_needs_the_password(client):
+    inv = make_invite(client)
+    assert client.patch(f"/api/invites/{inv['token']}", headers=ADMIN, json={"name": "  "}).status_code == 422
+    assert client.patch(f"/api/invites/{inv['token']}", json={"name": "x"}).status_code == 401
+    assert client.patch("/api/invites/missing", headers=ADMIN, json={"name": "x"}).status_code == 404
+
+
+def test_a_live_table_from_before_default_side_is_migrated(client):
+    """Production's bot_subscribers predates default_side: the first request
+    after the deploy must add the column, not fail every bot command."""
+    from sqlalchemy import inspect, text
+    client.post("/api/bot/subscribers", headers=ADMIN, json={"chat_id": "5", "first_name": "ורד"})
+    with models.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE bot_subscribers DROP COLUMN default_side"))
+    models._schema_ready = False
+    rows = client.get("/api/bot/subscribers", headers=ADMIN).json()
+    assert rows[0]["chat_id"] == "5" and rows[0]["default_side"] == ""
+    assert "default_side" in {c["name"] for c in inspect(models.engine).get_columns("bot_subscribers")}

@@ -43,4 +43,18 @@ async function has(chat_id) {
   return rows.some((s) => String(s.chat_id) === String(chat_id));
 }
 
-module.exports = { add, remove, all, has, backend };
+/** The side this chat's new invites go to without asking ('' = ask every time). */
+async function getDefaultSide(chat_id) {
+  const row = (await all()).find((s) => String(s.chat_id) === String(chat_id));
+  return (row && row.default_side) || '';
+}
+
+/** Set (or, with '', clear) this chat's default side. Resolves to the stored value. */
+async function setDefaultSide(chat_id, side) {
+  const res = await request('PUT', `/api/bot/subscribers/${encodeURIComponent(String(chat_id))}/side`, {
+    side: side || '',
+  });
+  return (res && res.subscriber && res.subscriber.default_side) || '';
+}
+
+module.exports = { add, remove, all, has, backend, getDefaultSide, setDefaultSide };

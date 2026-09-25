@@ -85,6 +85,7 @@ const mainMenu = () =>
     .text('➕ הזמנה חדשה', 'menu:invite')
     .text('📄 דוח אקסל', 'menu:export')
     .row()
+    .text('⚙️ צד ברירת מחדל', 'menu:side')
     .text('❓ עזרה', 'menu:help');
 
 /** Shown under a result, so the couple never has to type a command twice. */
@@ -97,21 +98,41 @@ const phoneStep = () =>
   new InlineKeyboard().text('⏭ דילוג על הטלפון', 'invite:nophone').row().text('✖️ ביטול', 'flow:cancel');
 
 /** Step 3: one button per side, two to a row. */
-function sideStep() {
+function sideStep({ rename = false } = {}) {
   const kb = new InlineKeyboard();
   const keys = Object.keys(SIDES);
   keys.forEach((key, i) => {
     kb.text(SIDES[key], `invite:side:${key}`);
     if (i % 2 === 1 && i < keys.length - 1) kb.row();
   });
+  // From a shared contact: the card's name may not be what the invite says.
+  if (rename) kb.row().text('✏️ שם אחר', 'invite:rename');
   return kb.row().text('✖️ ביטול', 'flow:cancel');
 }
 
+/** Pick this chat's default side; the current one is ticked. */
+function defaultSideMenu(current) {
+  const kb = new InlineKeyboard();
+  const keys = Object.keys(SIDES);
+  keys.forEach((key, i) => {
+    kb.text(`${current === key ? '✓ ' : ''}${SIDES[key]}`, `defside:${key}`);
+    if (i % 2 === 1) kb.row();
+  });
+  return kb
+    .text(`${current ? '' : '✓ '}🔄 לשאול בכל פעם`, 'defside:none')
+    .row()
+    .text('⬅️ תפריט', 'menu:home');
+}
+
 /** Offered after an invite is created. */
-/** After an invite: send it on WhatsApp in one tap (when there is a link), then carry on. */
-const afterInvite = (whatsappUrl) => {
+/**
+ * After an invite: send it on WhatsApp in one tap (when there is a number),
+ * rename it (when it was made straight from a contact card), then carry on.
+ */
+const afterInvite = (whatsappUrl, renameToken) => {
   const kb = new InlineKeyboard();
   if (whatsappUrl) kb.url('📲 שליחה בוואטסאפ', whatsappUrl).row();
+  if (renameToken) kb.text('✏️ שם אחר', `invite:rename:${renameToken}`).row();
   return kb.text('➕ עוד הזמנה', 'menu:invite').text('⬅️ תפריט', 'menu:home');
 };
 
@@ -134,6 +155,7 @@ module.exports = {
   cancelOnly,
   phoneStep,
   sideStep,
+  defaultSideMenu,
   afterInvite,
   shareContact,
 };

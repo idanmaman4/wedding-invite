@@ -37,6 +37,7 @@ const COMMANDS = [
   { command: 'pending', description: 'מי עדיין לא ענה' },
   { command: 'search', description: 'חיפוש לפי שם או טלפון' },
   { command: 'invite', description: 'הזמנה אישית חדשה (בשלבים)' },
+  { command: 'side', description: 'צד ברירת מחדל להזמנות חדשות' },
   { command: 'export', description: 'דוח אקסל מלא אליי' },
   { command: 'exportall', description: 'שליחת דוח אקסל לכל המנויים' },
   { command: 'whoami', description: 'מה ה-chat id שלי' },
@@ -385,6 +386,20 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
   const INVITE_STEP_NAME = 0;
   const INVITE_STEP_PHONE = 1;
   const INVITE_STEP_SIDE = 2;
+  const INVITE_STEP_RENAME = 3; // a shared contact's name, replaced before creating
+
+  /**
+   * This chat's default side, or '' to ask. A failed lookup just means asking:
+   * it must never stop an invitation from being made.
+   */
+  async function defaultSideFor(chatId) {
+    try {
+      return await store.getDefaultSide(chatId);
+    } catch (err) {
+      log.error('[side] could not read the default side:', err.message);
+      return '';
+    }
+  }
 
   async function askInviteName(ctx) {
     await ui.startFlow(ctx.chat.id, 'invite');
@@ -410,6 +425,13 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
   }
 
   async function askInviteSide(ctx, name) {
+    // A default side means there is nothing to ask.
+    const side = await defaultSideFor(ctx.chat.id);
+    if (side) {
+      const flow = await ui.getFlow(ctx.chat.id);
+      await finishInvite(ctx, { ...((flow && flow.data) || {}), name, side });
+      return;
+    }
     await ui.advanceFlow(ctx.chat.id, { step: INVITE_STEP_SIDE });
     await ctx.reply(
       `➕ <b>${fmt.esc(name)}</b> · שלב 3 מתוך 3\n\nלאיזה צד הם שייכים?`,
@@ -417,27 +439,45 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
     );
   }
 
+  /**
+   * The link plus the forwardable text for an invite that now exists.
+   * `offerRename` adds a "different name" button (invites made straight from
+   * a contact card carry the card's name, which may not be the right one).
+   */
+  async function sendInviteResult(ctx, invite, { headline, offerRename = false } = {}) {
+    const { name, phone, side } = invite;
+    const url = invite.url || api.inviteUrl(invite.token);
+    await ctx.reply(
+      `${headline || '✅ נוצרה הזמנה ל'}<b>${fmt.esc(name)}</b>\n` +
+        `👥 צד ${fmt.esc(fmt.sideLabel(side))}\n` +
+        `📞 ${phone ? fmt.esc(phone) : '—'}\n` +
+        `🔗 ${fmt.esc(url)}\n\n` +
+        'הנוסח המוכן לשליחה בהודעה הבאה — אפשר להעתיק אותו כמו שהוא.',
+      HTML,
+    );
+    // Sent unformatted so it can be copied straight into WhatsApp as-is; the
+    // button opens WhatsApp on the guest's chat with it already written.
+    const text = fmt.buildInvitationText(name, url);
+    await ctx.reply(text, {
+      link_preview_options: { is_disabled: true },
+      reply_markup: ui.afterInvite(
+        phone ? fmt.whatsappShareUrl(phone, text) : null,
+        offerRename ? invite.token : null,
+      ),
+    });
+  }
+
   /** Create the invitation and hand back the link plus forwardable text. */
-  async function finishInvite(ctx, { name, phone, side }) {
+  async function finishInvite(ctx, { name, phone, side }, { offerRename = false } = {}) {
     await ui.endFlow(ctx.chat.id);
     try {
       const invite = await api.createInvite({ name, phone: phone || '', side });
-      const url = invite.url || api.inviteUrl(invite.token);
-      await ctx.reply(
-        `✅ נוצרה הזמנה ל<b>${fmt.esc(name)}</b>\n` +
-          `👥 צד ${fmt.esc(fmt.sideLabel(side))}\n` +
-          `📞 ${phone ? fmt.esc(phone) : '—'}\n` +
-          `🔗 ${fmt.esc(url)}\n\n` +
-          'הנוסח המוכן לשליחה בהודעה הבאה — אפשר להעתיק אותו כמו שהוא.',
-        HTML,
+      // The API echoes what it stored; fall back to what was asked for.
+      await sendInviteResult(
+        ctx,
+        { ...invite, name: invite.name || name, phone: invite.phone || phone || '', side: invite.side || side },
+        { offerRename },
       );
-      // Sent unformatted so it can be copied straight into WhatsApp as-is; the
-      // button opens WhatsApp on the guest's chat with it already written.
-      const text = fmt.buildInvitationText(name, url);
-      await ctx.reply(text, {
-        link_preview_options: { is_disabled: true },
-        reply_markup: ui.afterInvite(phone ? fmt.whatsappShareUrl(phone, text) : null),
-      });
     } catch (err) {
       await ctx.reply(apiErrorMessage(err, 'יצירת הזמנות (POST /api/invites)'), {
         ...HTML,
@@ -506,12 +546,111 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
     }
 
     const name = contactName || phone;
+    // With a default side there is nothing to ask: create it now, and offer
+    // a different name on the result.
+    const side = await defaultSideFor(ctx.chat.id);
+    if (side) {
+      await finishInvite(ctx, { name, phone, side }, { offerRename: true });
+      return;
+    }
     await ui.startFlow(ctx.chat.id, 'invite', { name, phone });
     await ui.advanceFlow(ctx.chat.id, { step: INVITE_STEP_SIDE });
+    await askContactSide(ctx, name, phone);
+  });
+
+  async function askContactSide(ctx, name, phone) {
     await ctx.reply(
-      `📇 הזמנה ל<b>${fmt.esc(name)}</b>${phone ? ` · ${fmt.esc(phone)}` : ''}\n\nלאיזה צד הם שייכים?`,
-      { ...HTML, reply_markup: ui.sideStep() },
+      `📇 הזמנה ל<b>${fmt.esc(name)}</b>${phone ? ` · ${fmt.esc(phone)}` : ''}\n\n` +
+        'לאיזה צד הם שייכים? (אפשר גם לתת להזמנה שם אחר)\n' +
+        'טיפ: עם /side לא אשאל על הצד בכל פעם.',
+      { ...HTML, reply_markup: ui.sideStep({ rename: true }) },
     );
+  }
+
+  // ─── Default side ──────────────────────────────────────────────────────────
+
+  async function showDefaultSide(ctx) {
+    const current = await defaultSideFor(ctx.chat.id);
+    await ctx.reply(
+      '⚙️ <b>צד ברירת מחדל</b>\n\n' +
+        'הזמנות חדשות שלכם — גם מאיש קשר ששיתפתם — ייווצרו ישר בצד הזה, בלי לשאול.\n' +
+        `כרגע: <b>${current ? fmt.esc(fmt.sideLabel(current)) : 'לשאול בכל פעם'}</b>`,
+      { ...HTML, reply_markup: ui.defaultSideMenu(current) },
+    );
+  }
+
+  async function saveDefaultSide(ctx, side) {
+    try {
+      const saved = await store.setDefaultSide(ctx.chat.id, side);
+      await ctx.reply(
+        saved
+          ? `✅ מעכשיו הזמנות חדשות שלכם נוצרות בצד <b>${fmt.esc(fmt.sideLabel(saved))}</b> בלי לשאול.\nלשינוי: /side`
+          : '✅ מעכשיו אשאל על הצד בכל הזמנה.',
+        { ...HTML, reply_markup: ui.backToMenu() },
+      );
+    } catch (err) {
+      await ctx.reply(apiErrorMessage(err, 'שמירת צד ברירת מחדל'), { ...HTML, reply_markup: ui.backToMenu() });
+    }
+  }
+
+  bot.command('side', async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const raw = String(ctx.match || '').trim();
+    if (!raw) {
+      await showDefaultSide(ctx);
+      return;
+    }
+    if (/^(none|off|clear|ask|ללא|לשאול|בלי)$/i.test(raw)) {
+      await saveDefaultSide(ctx, '');
+      return;
+    }
+    const side = fmt.parseSide(raw);
+    if (!side) {
+      await ctx.reply(`⚠️ צד לא מוכר: "${fmt.esc(raw)}"`, HTML);
+      await showDefaultSide(ctx);
+      return;
+    }
+    await saveDefaultSide(ctx, side);
+  });
+
+  bot.callbackQuery(/^defside:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireAdmin(ctx))) return;
+    const choice = ctx.match[1];
+    if (choice !== 'none' && !Object.prototype.hasOwnProperty.call(api.SIDES, choice)) {
+      await showDefaultSide(ctx);
+      return;
+    }
+    await saveDefaultSide(ctx, choice === 'none' ? '' : choice);
+  });
+
+  // ─── A different name for a contact's invite ───────────────────────────────
+
+  // Before it exists: still choosing the side.
+  bot.callbackQuery('invite:rename', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireAdmin(ctx))) return;
+    const flow = await ui.getFlow(ctx.chat.id);
+    if (!flow || flow.flow !== 'invite') {
+      await ctx.reply('הבקשה פגה. שתפו את איש הקשר שוב.', { ...HTML, reply_markup: ui.mainMenu() });
+      return;
+    }
+    await ui.advanceFlow(ctx.chat.id, { step: INVITE_STEP_RENAME });
+    await ctx.reply(
+      `✏️ איזה שם לכתוב בהזמנה? (במקום "${fmt.esc(flow.data.name || '')}")`,
+      { ...HTML, reply_markup: ui.cancelOnly() },
+    );
+  });
+
+  // After it exists (made straight away with the default side): same link, new name.
+  bot.callbackQuery(/^invite:rename:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireAdmin(ctx))) return;
+    await ui.startFlow(ctx.chat.id, 'rename', { token: ctx.match[1] });
+    await ctx.reply('✏️ איזה שם לכתוב בהזמנה? הקישור נשאר אותו קישור.', {
+      ...HTML,
+      reply_markup: ui.cancelOnly(),
+    });
   });
 
   /** Free text is only ever an answer to a step the bot is waiting on. */
@@ -531,6 +670,24 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
       return;
     }
 
+    if (flow.flow === 'rename') {
+      if (!text) {
+        await ctx.reply('צריך שם. נסו שוב:', { ...HTML, reply_markup: ui.cancelOnly() });
+        return;
+      }
+      await ui.endFlow(ctx.chat.id);
+      try {
+        const invite = await api.updateInvite(flow.data.token, { name: text });
+        await sendInviteResult(ctx, invite, { headline: '✏️ השם עודכן: ', offerRename: true });
+      } catch (err) {
+        await ctx.reply(apiErrorMessage(err, 'עדכון הזמנה (PATCH /api/invites)'), {
+          ...HTML,
+          reply_markup: ui.backToMenu(),
+        });
+      }
+      return;
+    }
+
     if (flow.flow !== 'invite') return next();
 
     if (flow.step === INVITE_STEP_NAME) {
@@ -545,6 +702,16 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
     if (flow.step === INVITE_STEP_PHONE) {
       await ui.advanceFlow(ctx.chat.id, { data: { phone: text } });
       await askInviteSide(ctx, flow.data.name);
+      return;
+    }
+
+    if (flow.step === INVITE_STEP_RENAME) {
+      if (!text) {
+        await ctx.reply('צריך שם. נסו שוב:', { ...HTML, reply_markup: ui.cancelOnly() });
+        return;
+      }
+      await ui.advanceFlow(ctx.chat.id, { step: INVITE_STEP_SIDE, data: { name: text } });
+      await askContactSide(ctx, text, flow.data.phone || '');
       return;
     }
 
@@ -609,6 +776,11 @@ function createBot({ token, adminIds = [], openAdmin = true, log = console } = {
     }
     if (what === 'help') {
       await ctx.reply(fmt.HELP, { ...HTML, reply_markup: ui.backToMenu() });
+      return;
+    }
+    if (what === 'side') {
+      if (!(await requireAdmin(ctx))) return;
+      await showDefaultSide(ctx);
       return;
     }
     if (!(await requireAdmin(ctx))) return;

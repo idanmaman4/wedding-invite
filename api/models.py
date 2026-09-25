@@ -89,6 +89,9 @@ class Subscriber(Base):
     chat_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     first_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     username: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # The side (api.main.SIDES) this person's new invites go to without asking;
+    # "" means the bot asks every time.
+    default_side: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     subscribed_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
@@ -266,6 +269,9 @@ _LATE_COLUMNS = {
         ("phone", "VARCHAR(30) NOT NULL DEFAULT ''"),
         ("sent_at", "TIMESTAMP"),
         ("guest_id", "INTEGER"),
+    ],
+    "bot_subscribers": [
+        ("default_side", "VARCHAR(32) NOT NULL DEFAULT ''"),
     ],
 }
 

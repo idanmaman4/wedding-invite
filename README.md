@@ -116,7 +116,13 @@ side as buttons); the one-line form `/invite שם | טלפון | צד` still wor
 Or just **share a contact** with the bot: it takes the name and number from the
 card, asks only for the side, and sends back the personal link, the ready-to-send
 invitation text, and a button that opens WhatsApp on that person's chat with the
-invitation already written.
+invitation already written. A "✏️ שם אחר" button gives the invite a different
+name from the one on the card (after it is made, the link stays the same).
+
+**Default side.** `/side` (or ⚙️ in the menu) sets the side each person's new
+invites go to — Idan's chat can default to עידן, Vered's to ורד. With a default
+set, the bot never asks for the side: a shared contact becomes an invitation
+immediately. `/side none` goes back to asking.
 
 Every subscriber is broadcast each RSVP as it lands, and gets the XLSX export
 once a day.

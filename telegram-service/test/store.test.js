@@ -75,7 +75,7 @@ test('the registry is always the database, on Vercel or off it', () => {
 
 test('the old file-store knobs are gone from the module', () => {
   assert.equal(store.FILE, undefined);
-  assert.deepEqual(Object.keys(store).sort(), ['add', 'all', 'backend', 'has', 'remove']);
+  assert.deepEqual(Object.keys(store).sort(), ['add', 'all', 'backend', 'getDefaultSide', 'has', 'remove', 'setDefaultSide']);
 });
 
 // ─── Behaviour, against the in-memory tables ────────────────────────────────

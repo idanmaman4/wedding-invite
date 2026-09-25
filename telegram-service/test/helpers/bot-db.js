@@ -8,6 +8,8 @@
  * does in production. Not a test file itself (no `.test.js`).
  */
 
+const SIDE_KEYS = ['vered_parents', 'idan_parents', 'vered', 'idan'];
+
 function createBotDb() {
   const subscribers = new Map(); // chat_id → row, in signup order
   const states = new Map(); // chat_id → data
@@ -33,7 +35,7 @@ function createBotDb() {
         const user = (body && body.username) || '';
         const existing = subscribers.get(chatId);
         if (!existing) {
-          const row = { chat_id: chatId, first_name: first, username: user, subscribed_at: new Date().toISOString() };
+          const row = { chat_id: chatId, first_name: first, username: user, default_side: '', subscribed_at: new Date().toISOString() };
           subscribers.set(chatId, row);
           return { status: 200, body: { created: true, subscriber: { ...row } } };
         }
@@ -45,7 +47,16 @@ function createBotDb() {
       return { status: 405, body: { detail: 'Method Not Allowed' } };
     }
 
-    let m = pathname.match(/^\/api\/bot\/subscribers\/([^/]+)$/);
+    let m = pathname.match(/^\/api\/bot\/subscribers\/([^/]+)\/side$/);
+    if (m && method === 'PUT') {
+      const row = subscribers.get(m[1]);
+      if (!row) return { status: 404, body: { detail: 'Not subscribed' } };
+      const side = String((body && body.side) || '').trim();
+      if (side && !SIDE_KEYS.includes(side)) return { status: 422, body: { detail: 'unknown side' } };
+      row.default_side = side;
+      return { status: 200, body: { subscriber: { ...row } } };
+    }
+    m = pathname.match(/^\/api\/bot\/subscribers\/([^/]+)$/);
     if (m && method === 'DELETE') {
       const chatId = m[1];
       if (!subscribers.delete(chatId)) return { status: 200, body: { removed: false } };

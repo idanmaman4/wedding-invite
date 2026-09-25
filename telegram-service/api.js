@@ -147,6 +147,15 @@ async function createInvite({ name, phone, side }) {
   return normalizeInvite(data);
 }
 
+/** Rename an invite or move it to another side; its link stays the same. */
+async function updateInvite(token, fields) {
+  const data = await request('PATCH', `/api/invites/${encodeURIComponent(token)}`, fields);
+  if (!data || typeof data !== 'object') {
+    throw new ApiError('ה-API לא החזיר את ההזמנה המעודכנת');
+  }
+  return normalizeInvite(data);
+}
+
 /** Derive the whole stats block from the invite rows (the richest source). */
 function statsFromInvites(invites) {
   const bySide = {};
@@ -309,6 +318,7 @@ module.exports = {
   getGuests,
   getStats,
   createInvite,
+  updateInvite,
   inviteUrl,
   statsFromInvites,
   statsFromGuests,
