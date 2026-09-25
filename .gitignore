@@ -19,3 +19,5 @@ graft/
 telegram-service/subscribers.json
 telegram-service/node_modules/
 test-results/
+.vercel
+.env*
