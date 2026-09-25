@@ -76,8 +76,8 @@ def iso(value) -> Optional[str]:
     return str(value)
 
 
-# Column widths from api.models. SQLite ignores VARCHAR lengths, Postgres does
-# not: an over-long value there is a DataError and the RSVP is lost with a 500.
+# Column widths from api.models. Postgres enforces VARCHAR lengths: an
+# over-long value is a DataError and the RSVP would be lost with a 500.
 NAME_MAX = 255
 PHONE_MAX = 30
 
@@ -159,7 +159,7 @@ def submit_rsvp(data: RSVPRequest):
     with get_session() as session:
         invite = None
         if data.invite_token:
-            # Row-locked on Postgres (a no-op on SQLite): a double-tapped submit
+            # Row-locked: a double-tapped submit
             # from the same personal link must not create two guest rows.
             invite = session.scalar(
                 select(Invite).where(Invite.token == data.invite_token).with_for_update()
@@ -231,16 +231,13 @@ def diag(x_admin_password: Optional[str] = Header(None)):
     check_admin(x_admin_password)
     import sys, traceback
     import sqlalchemy
-    from .models import sqlite_path
     out = {
         "python": sys.version.split()[0],
         "sqlalchemy": sqlalchemy.__version__,
         "database_url_set": bool(os.environ.get("DATABASE_URL")),
-        "sqlite_path": sqlite_path(),
         "vercel": bool(os.environ.get("VERCEL")),
     }
     try:
-        out["sqlite_exists"] = os.path.exists(sqlite_path())
         with get_session() as session:
             rows = session.scalars(select(Guest)).all()
             out["row_count"] = len(rows)

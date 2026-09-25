@@ -1,9 +1,9 @@
 """Regressions for saving under production conditions.
 
-SQLite (what the rest of the suite runs on) forgives things Postgres does not:
-over-long VARCHARs, racing inserts, a DSN written for another client. These
-tests pin down the behaviour the API needs once DATABASE_URL points at a real
-hosted Postgres (Supabase / Neon), plus the timestamp and notify fixes.
+Supabase is hosted Postgres behind a pooler: over-long VARCHARs are errors,
+inserts race, and its connection strings carry parameters psycopg2 rejects.
+These tests pin down the behaviour the API needs there, plus the timestamp
+and notify fixes.
 """
 
 import os
@@ -66,7 +66,7 @@ def test_serverless_postgres_does_not_pool_connections(monkeypatch):
         engine.dispose()
 
 
-def test_an_unreachable_database_does_not_crash_startup(monkeypatch, db_path):
+def test_an_unreachable_database_does_not_crash_startup(monkeypatch, db_url):
     """Import-time setup must not 500 every endpoint until the instance dies."""
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@127.0.0.1:9/nodb?connect_timeout=1")
     try:
@@ -74,13 +74,26 @@ def test_an_unreachable_database_does_not_crash_startup(monkeypatch, db_path):
         assert models._schema_ready is False
     finally:
         monkeypatch.delenv("DATABASE_URL")
-        models.setup_db(url=f"sqlite:///{db_path}")
+        models.setup_db(url=db_url)
     assert models._schema_ready is True
 
 
-def test_schema_is_created_lazily_when_startup_could_not(client, db_path):
+def test_without_supabase_there_is_no_silent_fallback(monkeypatch, db_url):
+    """No DATABASE_URL: the function still starts, but nothing is saved anywhere
+    else — the old per-instance file fallback lost RSVPs without a trace."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    try:
+        assert models.setup_db() is None  # logs, does not crash the import
+        with pytest.raises(models.DatabaseNotConfigured):
+            with models.get_session():
+                pass
+    finally:
+        models.setup_db(url=db_url)
+
+
+def test_schema_is_created_lazily_when_startup_could_not(client, db_url):
     models.engine.dispose()
-    models.setup_db(url=f"sqlite:///{db_path}")
+    models.setup_db(url=db_url)
     models._schema_ready = False
     res = client.post("/api/rsvp", json={"name": "דנה", "attending": True})
     assert res.status_code == 200, res.text

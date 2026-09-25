@@ -112,9 +112,9 @@ await test('admin endpoints refuse the wrong password', async () => {
 await test('GET /api/diag — the database the instance really sees', async () => {
   const r = await call('/api/diag', { headers: admin });
   assert(r.status === 200, `HTTP ${r.status}`);
-  const d = JSON.stringify(r.body);
-  const durable = /postgres/i.test(d);
-  return durable ? 'Postgres' : 'SQLite in /tmp — RSVPs will NOT survive an instance recycle';
+  assert(r.body.database_url_set, 'DATABASE_URL is not set — nothing can be saved');
+  assert(!r.body.error, `the database did not answer: ${r.body.error}`);
+  return `Supabase (${r.body.row_count} RSVPs, ${r.body.invite_count} invites)`;
 });
 
 await test('GET /api/stats has every field the panel and the bot read', async () => {

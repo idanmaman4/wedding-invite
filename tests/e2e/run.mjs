@@ -2,7 +2,8 @@
  * Front-end end-to-end suite.
  *
  * Boots the real production build (`vite preview`) and the real FastAPI backend
- * against a throwaway SQLite file, then drives Chromium through the journeys a
+ * against a throwaway local Postgres (tests/e2e/pg_server.py — the same engine
+ * as production's Supabase), then drives Chromium through the journeys a
  * guest and the couple actually take: the invitation page, the whole RSVP
  * wizard on desktop and on a phone, a personal invite link, the confirmation
  * page, and the admin panel. Nothing is stubbed — an RSVP made here really does
@@ -148,7 +149,6 @@ const SITE_TEXT = {
 
 async function main() {
   const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wedding-e2e-'));
-  const dbPath = path.join(dbDir, 'e2e.db').replace(/\\/g, '/');
   const apiPort = await freePort();
   const webPort = await freePort();
   const apiBase = `http://127.0.0.1:${apiPort}`;
@@ -164,11 +164,21 @@ async function main() {
     });
   }
 
+  console.log('starting a throwaway Postgres…');
+  const pg = run('python', [path.join('tests', 'e2e', 'pg_server.py'), dbDir]);
+  const databaseUrl = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Postgres did not start:\n${pg.log}`)), 60000);
+    pg.stdout.on('data', () => {
+      const line = pg.log.split('\n').find((l) => l.startsWith('postgres'));
+      if (line) { clearTimeout(timer); resolve(line.trim()); }
+    });
+  });
+
   console.log(`starting the API on ${apiPort} and the site on ${webPort}…`);
   const api = run('python', ['-m', 'uvicorn', 'api.main:app', '--port', String(apiPort), '--host', '127.0.0.1'], {
     env: {
       ...process.env,
-      DATABASE_URL: `sqlite:///${dbPath}`,
+      DATABASE_URL: databaseUrl,
       ADMIN_PASSWORD,
       SITE_URL: siteBase,
       NOTIFY_URL: '',
@@ -179,7 +189,7 @@ async function main() {
   const web = run('npx', ['vite', 'preview', '--port', String(webPort), '--strictPort', '--host', '127.0.0.1']);
 
   const cleanup = () => {
-    for (const p of [api, web]) { try { p.killTree(); } catch {} }
+    for (const p of [api, web, pg]) { try { p.killTree(); } catch {} }
     try { fs.rmSync(dbDir, { recursive: true, force: true }); } catch {}
   };
   process.on('exit', cleanup);

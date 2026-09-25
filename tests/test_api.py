@@ -1,7 +1,8 @@
-"""End-to-end coverage of the RSVP / invite API against a temp SQLite file."""
+"""End-to-end coverage of the RSVP / invite API against a throwaway Postgres."""
 
 import pytest
 
+from api import models
 from conftest import ADMIN, make_invite
 
 
@@ -10,15 +11,12 @@ from conftest import ADMIN, make_invite
 def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok"}
 
-
-def test_fresh_database_has_both_tables(client, db_path):
-    import sqlite3
-    con = sqlite3.connect(db_path)
-    tables = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
-    assert {"guests", "invites"} <= tables
-    cols = {r[1] for r in con.execute("PRAGMA table_info(invites)")}
+def test_fresh_database_has_both_tables(client):
+    from sqlalchemy import inspect
+    insp = inspect(models.engine)
+    assert {"guests", "invites", "bot_subscribers", "bot_state"} <= set(insp.get_table_names())
+    cols = {c["name"] for c in insp.get_columns("invites")}
     assert {"token", "name", "side", "phone", "created_at", "sent_at", "guest_id"} <= cols
-    con.close()
 
 
 # ── Admin auth ───────────────────────────────────────────────────────────────

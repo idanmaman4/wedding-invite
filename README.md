@@ -27,8 +27,8 @@ npm install
 npm run dev                       # http://localhost:5173
 
 python -m venv .venv && .venv\Scripts\activate
-pip install -r requirements.txt
-python -m uvicorn api.main:app --reload --port 8000
+pip install -r requirements-dev.txt
+DATABASE_URL=<a Postgres URL> python -m uvicorn api.main:app --reload --port 8000
 ```
 
 Vite proxies `/api` to port 8000, so the front end talks to the local API with no
@@ -55,11 +55,14 @@ work on a hard refresh.
 
 ### The database, and why it matters
 
-Without `DATABASE_URL` the API falls back to SQLite. That is fine locally, but on
-Vercel the deployment is read-only apart from `/tmp`, so the file lives in `/tmp`
-and **is wiped whenever the instance recycles** — RSVPs would disappear.
+**Supabase is the only database.** Every RSVP, personal invite, bot subscriber
+and bot conversation step is a row there. There is no local fallback: without
+`DATABASE_URL` the API still starts (so `/api/health` answers) but every request
+that reads or writes data fails loudly. The old SQLite fallback wrote to `/tmp`
+on Vercel, which is wiped whenever an instance recycles, so RSVPs silently
+disappeared.
 
-**Production uses Supabase** (project `wedding-invite`, us-east-1, next to the
+Production uses Supabase (project `wedding-invite`, us-east-1, next to the
 Vercel functions in iad1). The app connects as its own role, `wedding_app`,
 through the transaction pooler (`aws-0-us-east-1.pooler.supabase.com:6543`), and
 its tables live in a private `wedding` schema (the role's `search_path`) that
@@ -67,7 +70,7 @@ Supabase's public Data API does not expose. `DATABASE_URL` is set for Production
 only, so preview deployments never write to the real guest list. Tables are
 created on the first request.
 
-To point it at a different database, set its connection string:
+To point it at a different Supabase project, set its pooler connection string:
 
 ```bash
 npx vercel env add DATABASE_URL production      # paste the postgres:// URL
@@ -81,7 +84,7 @@ couple keeps a durable record in chat even if the database is ever reset.
 
 | Variable | Where | Purpose |
 |---|---|---|
-| `DATABASE_URL` | Vercel + local | Postgres DSN; falls back to SQLite when unset |
+| `DATABASE_URL` | Vercel + local | Supabase pooler connection string (required) |
 | `ADMIN_PASSWORD` | Vercel + local | Guards every admin endpoint (`X-Admin-Password`) |
 | `SITE_URL` | Vercel | Base used when building personal invite links |
 | `TELEGRAM_BOT_TOKEN` | `.env.local` | From BotFather; never commit it |

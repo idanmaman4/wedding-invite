@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest==8.3.3
+# A throwaway local Postgres for the test suites (production is Supabase).
+pgserver==0.1.4
