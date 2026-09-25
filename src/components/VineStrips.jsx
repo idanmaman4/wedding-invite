@@ -59,6 +59,7 @@ export default function VineStrips(props) {
     object-fit: cover; object-position: top ${side};
     transform-origin: top center;
     animation: vine-sway-${side} ${side === 'left' ? '7.5s' : '8.5s'} ease-in-out infinite;
+    will-change: transform; backface-visibility: hidden;
   `;
 
   return (
@@ -86,7 +87,7 @@ export default function VineStrips(props) {
         src={`${base}_top.webp`}
         alt=""
         decoding="async"
-        style={`position:absolute; top:0; left:0; width:100%; height: calc(${set.top}px * var(--k, 1)); object-fit: cover; object-position: top center; animation: vine-sway-top 8s ease-in-out infinite;`}
+        style={`position:absolute; top:0; left:0; width:100%; height: calc(${set.top}px * var(--k, 1)); object-fit: cover; object-position: top center; animation: vine-sway-top 8s ease-in-out infinite; will-change: transform; backface-visibility: hidden;`}
       />}
       </div>
     </div>

@@ -73,6 +73,12 @@ function patchPointsVertex(material, uniforms, head, body, cacheKey) {
 const PHONE_MAX_WIDTH = 768;
 const PHONE_FRAME_INTERVAL = 1000 / 30;
 const FRAME_MS = 1000 / 60;
+// Adaptive frame rate: every device starts at the display's native rate; one
+// whose frames average slower than this (it cannot hold ~45fps) over a
+// one-second window drops to a steady 30fps, which reads smoother than an
+// uneven 35-45.
+const SLOW_FRAME_MS = 22;
+const SLOW_WINDOW = 60;
 
 export class WeddingScene {
   constructor(canvas) {
@@ -128,11 +134,28 @@ export class WeddingScene {
     return Math.min(window.devicePixelRatio || 1, cap);
   }
 
-  // Phones render at ~30fps (every other vsync at 60Hz) — imperceptible for
-  // slow particle drift, and halves the hero's main-thread time. Desktop
-  // stays on the display's native rate.
+  // Native rate everywhere (modern phones hold 60-120Hz with the rings in the
+  // vertex shader); see watchFrameRate() for the step down on slow devices.
+  // Once stepped down, a device stays at 30fps for the session.
   frameIntervalFor() {
-    return window.innerWidth < PHONE_MAX_WIDTH ? PHONE_FRAME_INTERVAL : 0;
+    return this._throttled ? PHONE_FRAME_INTERVAL : 0;
+  }
+
+  // Called once per rendered frame with the time since the previous one.
+  // Averages a window of frames and, if the device is falling behind, locks
+  // it to 30fps — an even cadence instead of a stuttering one.
+  watchFrameRate(dt) {
+    if (this._throttled || document.hidden) return;
+    this._rateSum = (this._rateSum || 0) + dt;
+    this._rateN = (this._rateN || 0) + 1;
+    if (this._rateN < SLOW_WINDOW) return;
+    const avg = this._rateSum / this._rateN;
+    this._rateSum = 0;
+    this._rateN = 0;
+    if (avg > SLOW_FRAME_MS) {
+      this._throttled = true;
+      this._frameInterval = PHONE_FRAME_INTERVAL;
+    }
   }
 
   // The hero is a normal-flow section: once it scrolls out of view nothing
@@ -488,6 +511,8 @@ export class WeddingScene {
     // (hidden tab, scrolled away) resumes without a jump.
     const dt = this._lastTick ? Math.min(now - this._lastTick, 100) : FRAME_MS;
     const fd = dt / FRAME_MS;
+    // A resume after a pause (hidden tab, scrolled away) is not a slow frame.
+    if (this._lastTick && dt < 100) this.watchFrameRate(dt);
     this._lastTick = now;
     this._frames += fd;
 

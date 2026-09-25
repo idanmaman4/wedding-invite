@@ -464,7 +464,7 @@ export default function RSVPForm() {
           {/* ── STEP 4: Phone ── */}
           <Show when={step() === STEP_PHONE}>
             <div style={cardStyle}>
-              <h2 style={headingStyle}>מספר הוואטסאפ שלכם</h2>
+              <h2 style={headingStyle}>מספר הטלפון שלכם</h2>
               <p style={subheadStyle}>כדי שנוכל לשלוח לכם את ההזמנה באופן דיגיטלי. לא חובה.</p>
               <label style={labelStyle}>
                 מספר טלפון
