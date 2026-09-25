@@ -1,35 +1,11 @@
 import { Show } from 'solid-js';
 import Nav from './Nav';
 import Details from './Details';
+import CalendarButtons from './CalendarButtons';
 
 // Post-RSVP confirmation page (/confirmed?name=…&attending=1|0).
 // Reuses the Details section so guests land on the date, schedule and venue
 // (with the Waze / Google Maps links) right after confirming.
-
-const ICS_FILENAME = 'idan-vered-wedding.ics';
-
-// Times are Israel local (UTC+3 in October): 18:30 reception, ends ~midnight.
-function buildIcs() {
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-  const lines = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//Idan & Vered//Wedding//HE',
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-    'BEGIN:VEVENT',
-    'UID:idan-vered-wedding-20261025@wedding-invite',
-    `DTSTAMP:${stamp}`,
-    'DTSTART:20261025T163000Z',
-    'DTEND:20261025T210000Z',
-    'SUMMARY:החתונה של עידן וורד',
-    'LOCATION:אולם האירועים תרין\\, אליעזר מזל 6\\, ראשון לציון',
-    'DESCRIPTION:קבלת פנים ב-18:30\\, חופה וקידושין ב-19:30',
-    'END:VEVENT',
-    'END:VCALENDAR',
-  ];
-  return 'data:text/calendar;charset=utf-8,' + encodeURIComponent(lines.join('\r\n') + '\r\n');
-}
 
 export default function Confirmed() {
   const params = new URLSearchParams(window.location.search);
@@ -76,16 +52,7 @@ export default function Confirmed() {
                 <span class="block sm:inline">25.10.2026</span>
               </p>
 
-              <a
-                href={buildIcs()}
-                download={ICS_FILENAME}
-                class="inline-block font-serif text-lg px-10 py-3 transition-colors duration-300"
-                style="color: #B22222; border: 2px solid #B22222; background: white; text-decoration: none; letter-spacing: 0.02em"
-                onMouseEnter={(e) => { e.currentTarget.style.background = '#B22222'; e.currentTarget.style.color = 'white'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; e.currentTarget.style.color = '#B22222'; }}
-              >
-                הוסיפו ליומן
-              </a>
+              <CalendarButtons />
             </Show>
           </div>
         </section>

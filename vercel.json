@@ -32,6 +32,15 @@
       "dest": "api/main.py"
     },
     {
+      "src": "/(.*)\\.ics",
+      "headers": {
+        "Content-Type": "text/calendar; charset=utf-8",
+        "Content-Disposition": "inline; filename=\"idan-vered-wedding.ics\"",
+        "Cache-Control": "public, max-age=3600"
+      },
+      "continue": true
+    },
+    {
       "handle": "filesystem"
     },
     {

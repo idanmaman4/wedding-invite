@@ -1,0 +1,24 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Idan & Vered//Wedding//HE
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:החתונה של עידן וורד
+BEGIN:VEVENT
+UID:idan-vered-wedding-20261025@wedding-invite-sand-kappa.vercel.app
+DTSTAMP:20260925T090000Z
+DTSTART:20261025T163000Z
+DTEND:20261025T210000Z
+SUMMARY:החתונה של עידן וורד 💍
+LOCATION:אולם האירועים תרין\, רח׳ אליעזר מזל 6\
+ , ראשון לציון
+DESCRIPTION:קבלת פנים ב-18:30\, חופה וקידושין ב-19:30
+ .\nנתראה!
+URL:https://wedding-invite-sand-kappa.vercel.app/
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:מחר החתונה של עידן וורד
+TRIGGER:-P1D
+END:VALARM
+END:VEVENT
+END:VCALENDAR
