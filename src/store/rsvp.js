@@ -86,3 +86,13 @@ export async function submitRSVP(formData) {
 }
 
 export { submitting, submitted, submitError, submitResult };
+
+/**
+ * A guest who confirmed says they can't make it after all (from their
+ * personal link). Resolves true once recorded (also when it already was).
+ */
+export async function cancelAttendance(token) {
+  const res = await fetch(`/api/invite/${encodeURIComponent(token)}/cancel`, { method: 'POST' });
+  if (!res.ok) throw new Error('העדכון לא נשמר, נסו שוב בעוד רגע.');
+  return true;
+}

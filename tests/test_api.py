@@ -236,7 +236,7 @@ def test_public_prefill_before_and_after_answering(client):
     before = client.get(f"/api/invite/{inv['token']}").json()
     assert before == {
         "name": "דנה כהן", "phone": "0501234567",
-        "responded": False, "attending": None, "guests": None,
+        "responded": False, "attending": None, "guests": None, "cancelled": False,
     }
 
     client.post("/api/rsvp", json={
@@ -257,7 +257,7 @@ def test_public_prefill_leaks_nothing_else(client):
         "dietary": "צמחוני", "message": "מזל טוב", "invite_token": inv["token"],
     })
     body = client.get(f"/api/invite/{inv['token']}").json()
-    assert set(body) == {"name", "phone", "responded", "attending", "guests"}
+    assert set(body) == {"name", "phone", "responded", "attending", "guests", "cancelled"}
 
 
 def test_unknown_token_404(client):
@@ -447,3 +447,49 @@ def test_a_live_table_from_before_default_side_is_migrated(client):
     rows = client.get("/api/bot/subscribers", headers=ADMIN).json()
     assert rows[0]["chat_id"] == "5" and rows[0]["default_side"] == ""
     assert "default_side" in {c["name"] for c in inspect(models.engine).get_columns("bot_subscribers")}
+
+
+# ── "Can't make it" after confirming ─────────────────────────────────────────
+
+def test_a_confirmed_guest_can_cancel_from_their_link(client):
+    inv = make_invite(client, name="משפחת לוי")
+    client.post("/api/rsvp", json={"name": "משפחת לוי", "attending": True, "guests": 4, "invite_token": inv["token"]})
+
+    res = client.post(f"/api/invite/{inv['token']}/cancel")
+    assert res.status_code == 200 and res.json() == {"success": True, "cancelled": True, "already": False}
+
+    view = client.get(f"/api/invite/{inv['token']}").json()
+    assert view["attending"] is False and view["cancelled"] is True
+    row = client.get("/api/guests", headers=ADMIN).json()[0]
+    assert row["attending"] is False
+    assert row["cancelled_at"], "the cancellation time is recorded"
+    assert row["guests"] == 4, "the confirmed party size is kept for the record"
+    stats = client.get("/api/stats", headers=ADMIN).json()
+    assert stats["total_people"] == 0 and stats["declined"] == 1
+
+    # Twice is harmless; answering again is still refused.
+    assert client.post(f"/api/invite/{inv['token']}/cancel").json()["already"] is True
+    assert client.post("/api/rsvp", json={"name": "x", "attending": True, "invite_token": inv["token"]}).status_code == 409
+
+
+def test_cancelling_needs_an_answered_link(client):
+    inv = make_invite(client)
+    assert client.post(f"/api/invite/{inv['token']}/cancel").status_code == 409   # not answered yet
+    assert client.post("/api/invite/no-such-token/cancel").status_code == 404
+    # Someone who declined has nothing to cancel: no cancellation is recorded.
+    client.post("/api/rsvp", json={"name": "ד", "attending": False, "invite_token": inv["token"]})
+    assert client.post(f"/api/invite/{inv['token']}/cancel").json() == {"success": True, "cancelled": False, "already": True}
+    assert client.get("/api/guests", headers=ADMIN).json()[0]["cancelled_at"] is None
+
+
+def test_a_live_guests_table_gets_the_cancelled_at_column(client):
+    """Production's guests table predates cancelled_at: the first request
+    after the deploy adds it."""
+    from sqlalchemy import inspect, text
+    client.post("/api/rsvp", json={"name": "ותיק", "attending": True})
+    with models.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE guests DROP COLUMN cancelled_at"))
+    models._schema_ready = False
+    rows = client.get("/api/guests", headers=ADMIN).json()
+    assert rows[0]["name"] == "ותיק" and rows[0]["cancelled_at"] is None
+    assert "cancelled_at" in {c["name"] for c in inspect(models.engine).get_columns("guests")}

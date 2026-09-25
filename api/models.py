@@ -50,6 +50,10 @@ class Guest(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
+    # When a guest who had confirmed said they can't make it after all (from
+    # their personal link). attending is then False; guests keeps the party
+    # size they had confirmed, for the record.
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
 
 
 class Invite(Base):
@@ -263,6 +267,7 @@ _LATE_COLUMNS = {
         ("whatsapp_sent_vered", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("dietary", "TEXT NOT NULL DEFAULT ''"),
         ("message", "TEXT NOT NULL DEFAULT ''"),
+        ("cancelled_at", "TIMESTAMP"),
     ],
     "invites": [
         ("side", "VARCHAR(32) NOT NULL DEFAULT 'idan'"),

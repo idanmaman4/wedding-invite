@@ -499,7 +499,7 @@ async function main() {
       for (const detail of ['י״ד בחשוון תשפ״ז', '19:30', 'אולם האירועים תרין', 'אלגנטי חגיגי']) {
         assert(body.includes(detail), `the invitation detail "${detail}" is missing`);
       }
-      assertEqual(await page.locator('button').count(), 0, 'the form (or any button) is still offered');
+      assertEqual(await page.getByRole('button', { name: /אישור הגעה|שליחה|המשך/ }).count(), 0, 'the form is still offered');
       const ics = page.locator('a[href$=".ics"]').first();
       assert(await ics.isVisible(), 'an attending guest should get the calendar button');
       // Just the details: no rings, vines or procession, and no automatic
@@ -514,7 +514,18 @@ async function main() {
       assertEqual(still.canvases, 0, 'a 3D scene was started');
       assertEqual(still.videos + still.vines, 0, 'the procession or the vines were loaded');
       assertEqual(still.scrollY, 0, 'the page scrolled by itself');
+
+      // "Can't make it": a confirm step, then the page and the database agree.
+      await page.getByRole('button', { name: 'לא נוכל להגיע' }).click();
+      await page.getByRole('button', { name: 'כן, לא נוכל להגיע' }).click();
+      await page.getByText('עדכנתם שלא תוכלו להגיע').first().waitFor({ state: 'visible', timeout: 15000 });
+      assertEqual(await page.locator('a[href$=".ics"]').count(), 0, 'no calendar button after cancelling');
     }, { url: `${siteBase}/?i=${token}`, ready: false });
+
+    const afterCancel = (await apiJson('/api/guests', { headers: admin })).body.find((g) => g.name === 'עונה פעם אחת');
+    assertEqual(afterCancel.attending, false, 'the cancellation did not reach the database');
+    assert(afterCancel.cancelled_at, 'cancelled_at was not recorded');
+    assertEqual(afterCancel.guests, 2, 'the confirmed party size should be kept for the record');
 
     // A second answer straight at the API (another tab) is refused too.
     const again = await apiJson('/api/rsvp', {

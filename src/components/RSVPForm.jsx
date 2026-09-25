@@ -4,6 +4,7 @@ import { submitRSVP, submitting, submitted, submitError, readInviteToken, fetchI
 import { revealOnScroll } from '../animations/gsapSetup';
 import ProcessionStage from './ProcessionStage';
 import CalendarButtons from './CalendarButtons';
+import CantMakeIt from './CantMakeIt';
 import { scrollToRSVP } from '../scrollToRSVP';
 
 // Step indices
@@ -365,6 +366,7 @@ export default function RSVPForm() {
                   </p>
                   <Show when={answeredAttending()}>
                     <CalendarButtons />
+                    <CantMakeIt token={inviteToken()} onCancelled={() => setAnsweredAttending(false)} />
                   </Show>
                 </Show>
               </div>

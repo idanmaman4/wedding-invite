@@ -76,6 +76,8 @@ def notify_rsvp(payload: Dict[str, Any]) -> None:
             "message": payload.get("message", "") or "",
             # A personal link re-submitted: an edit, not one more RSVP.
             "updated": bool(payload.get("updated")),
+            # A confirmed guest cancelled from their link ("can't make it").
+            "cancelled": bool(payload.get("cancelled")),
         }
         if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
             # A serverless instance is frozen the moment the response goes out,

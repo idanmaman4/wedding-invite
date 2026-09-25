@@ -308,3 +308,11 @@ test('whatsappShareUrl opens the guest chat with the text written', () => {
   // No number: WhatsApp lets the couple choose the chat.
   assert.equal(whatsappShareUrl('', text), `https://wa.me/${q}`);
 });
+
+test('a cancellation says who and how many seats it frees', () => {
+  const { formatRsvpNotification } = require('../format');
+  const text = formatRsvpNotification({ name: 'משפחת לוי', attending: false, guests: 4, side: 'vered', cancelled: true });
+  assert.ok(text.includes('ביטול הגעה'));
+  assert.ok(text.includes('משפחת לוי') && text.includes('היו רשומים 4'));
+  assert.ok(!text.includes('לא יוכלו להגיע'), 'not worded as a fresh decline');
+});

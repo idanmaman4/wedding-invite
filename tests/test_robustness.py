@@ -203,3 +203,16 @@ def test_a_refused_second_answer_is_not_announced(client, side_service, monkeypa
 
     assert len(side_service.received) == 1
     assert side_service.received[0]["body"]["updated"] is False
+
+
+def test_the_bot_is_told_about_a_cancellation(client, side_service, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("NOTIFY_URL", f"{side_service.url}/notify/rsvp")
+    monkeypatch.setenv("NOTIFY_SECRET", "s")
+    token = make_invite(client, name="משפחת לוי", side="vered")["token"]
+    client.post("/api/rsvp", json={"name": "משפחת לוי", "attending": True, "guests": 4, "invite_token": token})
+    assert wait_for(lambda: len(side_service.received) == 1)
+    client.post(f"/api/invite/{token}/cancel")
+    assert wait_for(lambda: len(side_service.received) == 2)
+    body = side_service.received[1]["body"]
+    assert body["cancelled"] is True and body["attending"] is False
+    assert body["guests"] == 4 and body["side"] == "vered"

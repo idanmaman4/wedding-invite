@@ -1,6 +1,7 @@
-import { For, Show } from 'solid-js';
+import { For, Show, createSignal } from 'solid-js';
 import { details } from './Details';
 import CalendarButtons from './CalendarButtons';
+import CantMakeIt from './CantMakeIt';
 
 /**
  * What a personal link shows once it has been answered: the invitation's
@@ -10,7 +11,9 @@ import CalendarButtons from './CalendarButtons';
  */
 export default function AnsweredInvite(props) {
   const invite = () => props.invite || {};
-  const coming = () => invite().attending === true;
+  // Flips when the guest cancels from this page ("לא נוכל להגיע").
+  const [cancelledHere, setCancelledHere] = createSignal(false);
+  const coming = () => invite().attending === true && !cancelledHere();
   const guests = () => Number(invite().guests) || 1;
   const name = () => String(invite().name || '').trim();
 
@@ -45,7 +48,12 @@ export default function AnsweredInvite(props) {
         <p class="font-sans text-sm mb-10" style="color: rgba(26,10,10,0.55)">צריך לשנות משהו? דברו איתנו ישירות.</p>
 
         <Show when={coming()}>
-          <div class="mb-12"><CalendarButtons /></div>
+          <div class="mb-12">
+            <CalendarButtons />
+            <Show when={props.token}>
+              <CantMakeIt token={props.token} onCancelled={() => setCancelledHere(true)} />
+            </Show>
+          </div>
         </Show>
 
         {/* The invitation's details, static */}

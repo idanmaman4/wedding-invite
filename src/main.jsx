@@ -32,7 +32,7 @@ function InviteGate(props) {
     <Show when={state().ready}>
       <Switch fallback={<HomePage />}>
         <Match when={state().invite && state().invite.responded}>
-          <AnsweredInvite invite={state().invite} />
+          <AnsweredInvite invite={state().invite} token={props.token} />
         </Match>
       </Switch>
     </Show>

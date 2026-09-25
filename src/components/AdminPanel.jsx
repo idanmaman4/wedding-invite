@@ -452,8 +452,10 @@ export default function AdminPanel() {
         'שם': g.name || '',
         'טלפון': g.phone || '',
         'צד': sideLabel(guestSide(g)),
-        'מגיעים': isAttending ? 'כן' : 'לא',
-        'כמות': isAttending ? partySize(g) : '',
+        'מגיעים': isAttending ? 'כן' : g.cancelled_at ? 'ביטלו' : 'לא',
+        // A cancellation keeps the party size they had confirmed.
+        'כמות': isAttending || g.cancelled_at ? partySize(g) : '',
+        'בוטל בתאריך': g.cancelled_at ? formatDate(g.cancelled_at) : '',
         'תזונה': g.dietary || '',
         'ברכה': g.message || '',
         'תאריך': formatDate(g.created_at),
@@ -927,7 +929,7 @@ export default function AdminPanel() {
                                     : 'border: 1px solid rgba(26,10,10,0.15); color: rgba(26,10,10,0.35)'
                                 }
                               >
-                                {isAttending ? 'כן' : 'לא'}
+                                {isAttending ? 'כן' : guest.cancelled_at ? `ביטלו (היו ${partyOf})` : 'לא'}
                               </span>
                             </td>
                             <td class="py-3 px-3 font-sans text-sm" style="color: rgba(26,10,10,0.5)">{isAttending ? partyOf : '—'}</td>

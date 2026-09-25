@@ -156,8 +156,14 @@ function formatRsvpNotification(payload) {
   // or the couple count the same party twice.
   const updated = payload.updated === true || payload.updated === 'true';
 
+  // A guest who had confirmed cancelled from their link: say how many seats
+  // that frees, since that is what the couple has to act on.
+  const cancelled = payload.cancelled === true || payload.cancelled === 'true';
+
   const lines = [];
-  if (updated) {
+  if (cancelled) {
+    lines.push(`❌ <b>ביטול הגעה:</b> ${name} (היו רשומים ${guests})${sideKey ? ` · צד ${sideKey}` : ''}`);
+  } else if (updated) {
     lines.push(
       attending
         ? `✏️ <b>עדכון אישור הגעה</b> — ${name}, ${guests} אורחים${sideKey ? `, צד ${sideKey}` : ''}`

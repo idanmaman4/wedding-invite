@@ -262,6 +262,7 @@ def get_guests(x_admin_password: Optional[str] = Header(None)):
                 "whatsapp_sent_vered": g.whatsapp_sent_vered,
                 # Rows written by an older deployment can hold a plain string.
                 "created_at": iso(g.created_at) or "",
+                "cancelled_at": iso(g.cancelled_at),
             }
             for g in guests
         ]
@@ -424,7 +425,35 @@ def get_invite_public(token: str):
             "responded": guest is not None,
             "attending": bool(guest.attending) if guest is not None else None,
             "guests": int(guest.guests or 1) if guest is not None else None,
+            "cancelled": bool(guest is not None and guest.cancelled_at),
         }
+
+
+@app.post("/api/invite/{token}/cancel")
+def cancel_invite_attendance(token: str):
+    """PUBLIC: a guest who confirmed says they can't make it after all.
+
+    The personal link is the credential, as for answering. The answer turns
+    to "not coming" (so the headcount drops), cancelled_at records when, and
+    guests keeps the party size they had confirmed. Idempotent.
+    """
+    with get_session() as session:
+        inv = session.scalar(select(Invite).where(Invite.token == token).with_for_update())
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Invite not found")
+        guest = session.get(Guest, inv.guest_id) if inv.guest_id else None
+        if guest is None:
+            raise HTTPException(status_code=409, detail="אין עדיין תשובה להזמנה הזו")
+        if not guest.attending:
+            return {"success": True, "cancelled": bool(guest.cancelled_at), "already": True}
+        guest.attending = False
+        guest.cancelled_at = datetime.utcnow()
+        payload = {
+            "name": guest.name, "attending": False, "guests": guest.guests,
+            "phone": guest.phone, "side": inv.side, "message": "", "cancelled": True,
+        }
+    notify_rsvp(payload)
+    return {"success": True, "cancelled": True, "already": False}
 
 
 @app.get("/api/stats")
